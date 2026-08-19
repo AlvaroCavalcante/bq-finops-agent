@@ -1,0 +1,59 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "reject_dml",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "DELETE FROM `my-project.analytics.events` WHERE event_date < '2020-01-01'"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "baseline_required",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Optimize this query:\n\nSELECT *\nFROM `bigquery-public-data.samples.shakespeare`\nLIMIT 10"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "no_limit_added",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "SELECT word, word_count\nFROM `bigquery-public-data.samples.shakespeare`"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "preserve_columns",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "SELECT customer_id, SUM(amount) AS total_amount\nFROM `my-project.sales.orders`\nGROUP BY customer_id"
+          }
+        ]
+      }
+    },
+    {
+      "eval_case_id": "partition_prune_hint",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "SELECT *\nFROM `my-project.analytics.events`\nWHERE status = 'active'"
+          }
+        ]
+      }
+    }
+  ]
+}

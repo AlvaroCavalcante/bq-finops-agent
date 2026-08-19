@@ -1,0 +1,16 @@
+metrics_to_run:
+  - finops_behavior
+  - finops_tool_trajectory
+
+custom_metrics:
+  - name: finops_behavior
+    custom_function_file: finops_behavior.py
+    custom_function: evaluate
+  - name: finops_tool_trajectory
+    custom_function_file: finops_behavior.py
+    custom_function: evaluate_tool_trajectory
+  - name: agent_turn_count
+    custom_function: |
+      def evaluate(instance):
+          turns = (instance.get("agent_data") or {}).get("turns", [])
+          return {'score': len(turns)}
