@@ -28,10 +28,6 @@ def _model() -> Gemini:
     )
 
 
-def _gen_config() -> types.GenerateContentConfig:
-    return types.GenerateContentConfig(temperature=0.1, max_output_tokens=8192)
-
-
 baseline_agent = Agent(
     name="baseline_agent",
     model=_model(),
@@ -39,7 +35,6 @@ baseline_agent = Agent(
     description="Measures baseline bytes for the input SQL.",
     tools=[measure_query_cost, assert_readonly_select],
     before_tool_callback=before_tool_callback,
-    generate_content_config=_gen_config(),
     include_contents=_INCLUDE_CONTENTS,
     output_key="baseline_step",
 )
@@ -56,7 +51,6 @@ metadata_agent = Agent(
         detect_sql_antipatterns,
     ],
     before_tool_callback=before_tool_callback,
-    generate_content_config=_gen_config(),
     include_contents=_INCLUDE_CONTENTS,
     output_key="metadata_step",
 )
@@ -67,7 +61,6 @@ optimizer_agent = Agent(
     instruction=load_prompt("optimizer"),
     description="Rewrites SQL to reduce bytes processed.",
     tools=[diff_sql],
-    generate_content_config=_gen_config(),
     include_contents=_INCLUDE_CONTENTS,
     output_key="optimizer_step",
 )
@@ -79,7 +72,6 @@ validator_agent = Agent(
     description="Validates optimized SQL and compares bytes.",
     tools=[measure_query_cost, validate_output_schema, compare_query_stats],
     before_tool_callback=before_tool_callback,
-    generate_content_config=_gen_config(),
     include_contents=_INCLUDE_CONTENTS,
     output_key="validation",
 )
@@ -91,7 +83,6 @@ formatter_agent = Agent(
     description="Formats the final optimization report.",
     output_schema=OptimizationReport,
     output_key="optimization_report",
-    generate_content_config=_gen_config(),
     include_contents=_INCLUDE_CONTENTS,
 )
 
