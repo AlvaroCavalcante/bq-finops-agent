@@ -12,16 +12,65 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from google.adk.agents import LoopAgent, SequentialAgent
+from google.adk.workflow import Workflow
 
 from app.agent import root_agent
+from app.agents.checkers import CONTINUE_ROUTE, EXIT_ROUTE, decide_optimization_loop
+from app.agents.pipeline import (
+    baseline_agent,
+    formatter_agent,
+    metadata_agent,
+    optimizer_agent,
+    validator_agent,
+)
 
 
-def test_root_agent_is_sequential_pipeline() -> None:
-    assert isinstance(root_agent, SequentialAgent)
+def test_root_agent_is_finops_workflow() -> None:
+    assert isinstance(root_agent, Workflow)
     assert root_agent.name == "bq_finops_agent"
-    assert len(root_agent.sub_agents) == 4
-    assert root_agent.sub_agents[0].name == "baseline_agent"
-    assert root_agent.sub_agents[1].name == "metadata_agent"
-    assert isinstance(root_agent.sub_agents[2], LoopAgent)
-    assert root_agent.sub_agents[3].name == "formatter_agent"
+    assert root_agent.graph is not None
+
+    node_names = {node.name for node in root_agent.graph.nodes}
+    assert node_names == {
+        "__START__",
+        "baseline_agent",
+        "metadata_agent",
+        "optimizer_agent",
+        "validator_agent",
+        "decide_optimization_loop",
+        "formatter_agent",
+    }
+
+    routed = {
+        (edge.from_node.name, edge.to_node.name, edge.route)
+        for edge in root_agent.graph.edges
+    }
+    assert ("__START__", "baseline_agent", None) in routed
+    assert ("baseline_agent", "metadata_agent", None) in routed
+    assert ("metadata_agent", "optimizer_agent", None) in routed
+    assert ("optimizer_agent", "validator_agent", None) in routed
+    assert (
+        "validator_agent",
+        "decide_optimization_loop",
+        None,
+    ) in routed
+    assert (
+        "decide_optimization_loop",
+        "optimizer_agent",
+        CONTINUE_ROUTE,
+    ) in routed
+    assert (
+        "decide_optimization_loop",
+        "formatter_agent",
+        EXIT_ROUTE,
+    ) in routed
+
+
+def test_workflow_nodes_are_pipeline_agents() -> None:
+    nodes = {node.name: node for node in root_agent.graph.nodes}
+    assert nodes["baseline_agent"].name == baseline_agent.name
+    assert nodes["metadata_agent"].name == metadata_agent.name
+    assert nodes["optimizer_agent"].name == optimizer_agent.name
+    assert nodes["validator_agent"].name == validator_agent.name
+    assert nodes["formatter_agent"].name == formatter_agent.name
+    assert nodes["decide_optimization_loop"].name == decide_optimization_loop.__name__

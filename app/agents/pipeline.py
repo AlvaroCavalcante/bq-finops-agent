@@ -1,8 +1,9 @@
-from google.adk.agents import Agent, LoopAgent, SequentialAgent
+from google.adk.agents import Agent
 from google.adk.models import Gemini
+from google.adk.workflow import Workflow
 from google.genai import types
 
-from app.agents.checkers import ValidationEscalationChecker
+from app.agents.checkers import CONTINUE_ROUTE, EXIT_ROUTE, decide_optimization_loop
 from app.callbacks import before_tool_callback
 from app.prompts import load_prompt
 from app.schemas import OptimizationReport
@@ -17,6 +18,7 @@ from app.tools.metadata import (
 from app.tools.safety import assert_readonly_select
 
 MODEL = "gemini-3.6-flash"
+_INCLUDE_CONTENTS = "default"
 
 
 def _model() -> Gemini:
@@ -38,6 +40,7 @@ baseline_agent = Agent(
     tools=[measure_query_cost, assert_readonly_select],
     before_tool_callback=before_tool_callback,
     generate_content_config=_gen_config(),
+    include_contents=_INCLUDE_CONTENTS,
     output_key="baseline_step",
 )
 
@@ -54,6 +57,7 @@ metadata_agent = Agent(
     ],
     before_tool_callback=before_tool_callback,
     generate_content_config=_gen_config(),
+    include_contents=_INCLUDE_CONTENTS,
     output_key="metadata_step",
 )
 
@@ -64,6 +68,7 @@ optimizer_agent = Agent(
     description="Rewrites SQL to reduce bytes processed.",
     tools=[diff_sql],
     generate_content_config=_gen_config(),
+    include_contents=_INCLUDE_CONTENTS,
     output_key="optimizer_step",
 )
 
@@ -75,15 +80,8 @@ validator_agent = Agent(
     tools=[measure_query_cost, validate_output_schema, compare_query_stats],
     before_tool_callback=before_tool_callback,
     generate_content_config=_gen_config(),
+    include_contents=_INCLUDE_CONTENTS,
     output_key="validation",
-)
-
-validation_checker = ValidationEscalationChecker(name="validation_checker")
-
-optimization_loop = LoopAgent(
-    name="optimization_loop",
-    sub_agents=[optimizer_agent, validator_agent, validation_checker],
-    max_iterations=3,
 )
 
 formatter_agent = Agent(
@@ -94,14 +92,27 @@ formatter_agent = Agent(
     output_schema=OptimizationReport,
     output_key="optimization_report",
     generate_content_config=_gen_config(),
+    include_contents=_INCLUDE_CONTENTS,
 )
 
-root_agent = SequentialAgent(
+root_agent = Workflow(
     name="bq_finops_agent",
-    sub_agents=[
-        baseline_agent,
-        metadata_agent,
-        optimization_loop,
-        formatter_agent,
+    description=(
+        "One-shot BigQuery SQL optimizer: baseline, metadata, "
+        "optimize/validate loop, then a structured report."
+    ),
+    edges=[
+        ("START", baseline_agent),
+        (baseline_agent, metadata_agent),
+        (metadata_agent, optimizer_agent),
+        (optimizer_agent, validator_agent),
+        (validator_agent, decide_optimization_loop),
+        (
+            decide_optimization_loop,
+            {
+                CONTINUE_ROUTE: optimizer_agent,
+                EXIT_ROUTE: formatter_agent,
+            },
+        ),
     ],
 )

@@ -1,4 +1,3 @@
-
 from app.tools.antipatterns import detect_sql_antipatterns
 from app.tools.compare import compare_query_stats, diff_sql, validate_output_schema
 from app.tools.measure_cost import measure_query_cost
