@@ -13,21 +13,21 @@ Purpose = Literal["baseline", "optimized_probe", "optimized_final"]
 def _schema_fields(job: bigquery.QueryJob) -> list[dict]:
     if job.schema is None:
         return []
-    return [{"name": f.name, "type": f.field_type, "mode": f.mode} for f in job.schema]
+    return [{"name": field.name, "type": field.field_type, "mode": field.mode} for field in job.schema]
 
 
 def _referenced_tables(job: bigquery.QueryJob) -> list[dict]:
-    refs = []
+    tables = []
     if job.referenced_tables:
-        for t in job.referenced_tables:
-            refs.append(
+        for table in job.referenced_tables:
+            tables.append(
                 {
-                    "project": t.project,
-                    "dataset": t.dataset_id,
-                    "table": t.table_id,
+                    "project": table.project,
+                    "dataset": table.dataset_id,
+                    "table": table.table_id,
                 }
             )
-    return refs
+    return tables
 
 
 def _run_query(sql: str, dry_run: bool) -> bigquery.QueryJob:
@@ -98,7 +98,7 @@ def measure_query_cost(
         dry_job = _run_query(sql, dry_run=True)
         dry_result = _job_result(dry_job, "dry_run")
         methods_used.append("dry_run")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         dry_result = {"status": "error", "error_message": str(exc)}
 
     has_clustering = False
@@ -114,7 +114,7 @@ def measure_query_cost(
             live_job = _run_query(sql, dry_run=False)
             live_result = _job_result(live_job, "live")
             methods_used.append("live")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if dry_result and dry_result.get("status") == "success":
                 live_result = None
                 return {
@@ -134,12 +134,14 @@ def measure_query_cost(
             dry_result.get("total_bytes_processed") if dry_result else None
         )
     else:
-        final = dry_result or {"status": "error", "error_message": "Measurement failed."}
+        final = dry_result or {"status": "error",
+                               "error_message": "Measurement failed."}
         final["measurement_method"] = "dry_run"
 
     if purpose == "baseline":
         tool_context.state["baseline"] = final
-        tool_context.state["baseline_measured"] = final.get("status") == "success"
+        tool_context.state["baseline_measured"] = final.get(
+            "status") == "success"
 
     if purpose in ("optimized_probe", "optimized_final"):
         tool_context.state["optimized_measurement"] = final

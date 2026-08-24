@@ -11,7 +11,7 @@ _client: bigquery.Client | None = None
 
 def get_bq_location() -> str:
     """BigQuery job location. Independent from Vertex GOOGLE_CLOUD_LOCATION."""
-    location = (os.environ.get("BQ_LOCATION") or _DEFAULT_BQ_LOCATION).strip()
+    location = os.environ.get("BQ_LOCATION", _DEFAULT_BQ_LOCATION).strip()
     if location.lower() == "global":
         raise ValueError(
             "BQ_LOCATION cannot be 'global'. BigQuery jobs need a region "
@@ -30,14 +30,10 @@ def get_bq_client() -> bigquery.Client:
 
 
 def get_max_bytes_billed() -> int:
-    raw = os.environ.get("BQ_MAX_BYTES_BILLED")
-    if raw is None:
-        return _DEFAULT_MAX_BYTES
-    return int(raw)
+    return int(
+        os.environ.get("BQ_MAX_BYTES_BILLED", _DEFAULT_MAX_BYTES))
 
 
 def get_usd_per_tib() -> float:
-    raw = os.environ.get("BQ_ON_DEMAND_USD_PER_TIB")
-    if raw is None:
-        return _DEFAULT_USD_PER_TIB
-    return float(raw)
+    return float(
+        os.environ.get("BQ_ON_DEMAND_USD_PER_TIB", _DEFAULT_USD_PER_TIB))
