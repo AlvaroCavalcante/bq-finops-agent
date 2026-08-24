@@ -15,7 +15,6 @@ from app.tools.metadata import (
     get_table_metadata,
     get_view_definition,
 )
-from app.tools.safety import assert_readonly_select
 
 MODEL = "gemini-3.6-flash"
 _INCLUDE_CONTENTS = "default"
@@ -33,7 +32,7 @@ baseline_agent = Agent(
     model=_model(),
     instruction=load_prompt("baseline"),
     description="Measures baseline bytes for the input SQL.",
-    tools=[measure_query_cost, assert_readonly_select],
+    tools=[measure_query_cost],
     before_tool_callback=before_tool_callback,
     include_contents=_INCLUDE_CONTENTS,
     output_key="baseline_step",

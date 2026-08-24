@@ -16,8 +16,9 @@ import json
 
 import pytest
 
+from app.callbacks import before_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
-from app.tools.safety import assert_readonly_select, is_readonly_select
+from app.tools.safety import is_readonly_select
 
 
 def test_readonly_select_accepts_with_clause() -> None:
@@ -34,10 +35,33 @@ def test_readonly_select_rejects_delete() -> None:
     assert err is not None
 
 
-def test_assert_readonly_select_tool() -> None:
-    result = assert_readonly_select("SELECT 1")
-    assert result["status"] == "success"
-    assert result["readonly"] is True
+def test_before_tool_callback_allows_select() -> None:
+    result = before_tool_callback(
+        tool=None,
+        args={"sql": "SELECT 1", "purpose": "baseline"},
+        tool_context=None,
+    )
+    assert result is None
+
+
+def test_before_tool_callback_blocks_dml() -> None:
+    result = before_tool_callback(
+        tool=None,
+        args={"sql": "DELETE FROM dataset.table WHERE id = 1", "purpose": "baseline"},
+        tool_context=None,
+    )
+    assert result is not None
+    assert result["status"] == "error"
+    assert "error_message" in result
+
+
+def test_before_tool_callback_skips_tools_without_sql_args() -> None:
+    result = before_tool_callback(
+        tool=None,
+        args={"project": "p", "dataset": "d", "table": "t"},
+        tool_context=None,
+    )
+    assert result is None
 
 
 def test_validate_output_schema_passes_matching_columns() -> None:

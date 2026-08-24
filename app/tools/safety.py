@@ -23,18 +23,3 @@ def is_readonly_select(sql: str) -> tuple[bool, str | None]:
         return False, "Query must start with SELECT or WITH."
 
     return True, None
-
-
-def assert_readonly_select(sql: str) -> dict:
-    """Validate that SQL is read-only before running against BigQuery.
-
-    Args:
-        sql: BigQuery SQL to validate.
-
-    Returns:
-        dict with status and optional error message.
-    """
-    ok, err = is_readonly_select(sql)
-    if ok:
-        return {"status": "success", "readonly": True}
-    return {"status": "error", "readonly": False, "error_message": err}

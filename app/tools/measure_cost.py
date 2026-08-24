@@ -6,7 +6,6 @@ from google.adk.tools import ToolContext
 from google.cloud import bigquery
 
 from app.tools.bq_client import get_bq_client, get_max_bytes_billed
-from app.tools.safety import is_readonly_select
 
 Purpose = Literal["baseline", "optimized_probe", "optimized_final"]
 
@@ -91,10 +90,6 @@ def measure_query_cost(
     Returns:
         dict with bytes, measurement_method, schema, and referenced tables.
     """
-    ok, err = is_readonly_select(sql)
-    if not ok:
-        return {"status": "error", "error_message": err}
-
     methods_used: list[str] = []
     dry_result: dict | None = None
     live_result: dict | None = None
