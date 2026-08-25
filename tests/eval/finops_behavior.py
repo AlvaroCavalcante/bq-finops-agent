@@ -68,7 +68,11 @@ def evaluate_tool_trajectory(instance):
     tools = set(_tool_names(instance))
     expected = {
         "baseline_required": {"measure_query_cost"},
-        "metadata_enrichment": {"get_table_metadata", "detect_sql_antipatterns"},
+        "metadata_enrichment": {
+            "list_referenced_tables",
+            "get_table_metadata",
+            "detect_sql_antipatterns",
+        },
     }.get(eval_id, set())
     if not expected:
         return {"score": 1, "explanation": "No trajectory requirement."}

@@ -39,10 +39,9 @@ def _run_query(sql: str, dry_run: bool) -> bigquery.QueryJob:
 
 
 def _job_result(job: bigquery.QueryJob, method: str) -> dict:
-    bytes_processed = job.total_bytes_processed or 0
     return {
         "status": "success",
-        "total_bytes_processed": bytes_processed,
+        "total_bytes_processed": job.total_bytes_processed,
         "measurement_method": method,
         "referenced_tables": _referenced_tables(job),
         "output_schema": _schema_fields(job),
@@ -51,25 +50,62 @@ def _job_result(job: bigquery.QueryJob, method: str) -> dict:
     }
 
 
-def _dry_run_unreliable(result: dict, has_clustering: bool) -> bool:
+def _execute(sql: str, dry_run: bool) -> dict:
+    method = "dry_run" if dry_run else "live"
+    try:
+        job = _run_query(sql, dry_run=dry_run)
+        return _job_result(job, method)
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "error", "error_message": str(exc)}
+
+
+def _store_measurement(
+    purpose: str,
+    final: dict,
+    methods_used: list[str],
+    tool_context: ToolContext,
+) -> None:
+    if purpose == "baseline":
+        tool_context.state["baseline"] = final
+        tool_context.state["baseline_measured"] = final.get("status") == "success"
+
+    if purpose in ("optimized_probe", "optimized_final"):
+        tool_context.state["optimized_measurement"] = final
+        if "live" in methods_used and final.get("status") == "success":
+            tool_context.state["optimized_verified_live"] = True
+
+
+def _cached_dry_run(sql: str, tool_context: ToolContext) -> dict | None:
+    cached = tool_context.state.get("discovery_dry_run")
+    cached_sql = tool_context.state.get("discovery_sql")
+    if (
+        isinstance(cached, dict)
+        and cached.get("status") == "success"
+        and cached_sql == sql
+    ):
+        return dict(cached)
+    return None
+
+
+def list_referenced_tables(sql: str, tool_context: ToolContext) -> dict:
+    """Discover tables referenced by a SQL query via BigQuery dry-run.
+
+    Never executes the query. On failure, does not invent table names.
+
+    Args:
+        sql: BigQuery SQL to inspect.
+
+    Returns:
+        dict with referenced_tables on success, or status=error.
+    """
+    result = _execute(sql, dry_run=True)
     if result.get("status") != "success":
-        return True
-    bytes_val = result.get("total_bytes_processed")
-    if bytes_val is None:
-        return True
-    if has_clustering:
-        return True
-    return False
+        return result
 
-
-def _table_has_clustering(referenced: list[dict]) -> bool:
-    from app.tools.metadata import get_table_metadata
-
-    for ref in referenced:
-        meta = get_table_metadata(ref["project"], ref["dataset"], ref["table"])
-        if meta.get("status") == "success" and meta.get("clustering_fields"):
-            return True
-    return False
+    tool_context.state["referenced_tables"] = result.get("referenced_tables") or []
+    tool_context.state["discovery_dry_run"] = result
+    tool_context.state["discovery_sql"] = sql
+    return result
 
 
 def measure_query_cost(
@@ -79,9 +115,9 @@ def measure_query_cost(
 ) -> dict:
     """Measure BigQuery bytes processed for a SQL query.
 
-    Applies dry-run first; automatically falls back to live execution when
-    dry-run is unreliable (clustering, missing estimate) or when purpose is
-    optimized_final (always verifies with a live run).
+    Chooses live vs dry-run up front from purpose and session clustering
+    state. Does not look up table metadata. Reuses a discovery dry-run
+    cache when measuring the same SQL on the dry-run path.
 
     Args:
         sql: BigQuery SQL to measure.
@@ -90,62 +126,46 @@ def measure_query_cost(
     Returns:
         dict with bytes, measurement_method, schema, and referenced tables.
     """
+    has_clustering = bool(tool_context.state.get("has_clustering"))
+    use_live = purpose == "optimized_final" or has_clustering
     methods_used: list[str] = []
-    dry_result: dict | None = None
-    live_result: dict | None = None
 
-    try:
-        dry_job = _run_query(sql, dry_run=True)
-        dry_result = _job_result(dry_job, "dry_run")
-        methods_used.append("dry_run")
-    except Exception as exc:
-        dry_result = {"status": "error", "error_message": str(exc)}
-
-    has_clustering = False
-    if dry_result and dry_result.get("referenced_tables"):
-        has_clustering = _table_has_clustering(dry_result["referenced_tables"])
-
-    need_live = purpose == "optimized_final" or _dry_run_unreliable(
-        dry_result or {}, has_clustering
-    )
-
-    if need_live:
-        try:
-            live_job = _run_query(sql, dry_run=False)
-            live_result = _job_result(live_job, "live")
+    if use_live:
+        final = _execute(sql, dry_run=False)
+        if final.get("status") == "success":
             methods_used.append("live")
-        except Exception as exc:
-            if dry_result and dry_result.get("status") == "success":
-                live_result = None
-                return {
-                    **dry_result,
-                    "measurement_method": "dry_run",
-                    "warnings": [f"Live run failed: {exc}"],
-                }
-            return {"status": "error", "error_message": str(exc)}
-
-    if live_result:
-        final = live_result
-        if "dry_run" in methods_used and "live" in methods_used:
-            final["measurement_method"] = "mixed"
-        else:
             final["measurement_method"] = "live"
-        final["dry_run_bytes"] = (
-            dry_result.get("total_bytes_processed") if dry_result else None
-        )
-    else:
-        final = dry_result or {"status": "error",
-                               "error_message": "Measurement failed."}
-        final["measurement_method"] = "dry_run"
+        _store_measurement(purpose, final, methods_used, tool_context)
+        return final
 
-    if purpose == "baseline":
-        tool_context.state["baseline"] = final
-        tool_context.state["baseline_measured"] = final.get(
-            "status") == "success"
+    dry_result = _cached_dry_run(sql, tool_context)
+    if dry_result is None:
+        dry_result = _execute(sql, dry_run=True)
 
-    if purpose in ("optimized_probe", "optimized_final"):
-        tool_context.state["optimized_measurement"] = final
-        if "live" in methods_used:
-            tool_context.state["optimized_verified_live"] = True
+    if dry_result.get("status") != "success":
+        _store_measurement(purpose, dry_result, methods_used, tool_context)
+        return dry_result
 
-    return final
+    methods_used.append("dry_run")
+
+    if dry_result.get("total_bytes_processed") is None:
+        live_result = _execute(sql, dry_run=False)
+        if live_result.get("status") != "success":
+            final = {
+                "status": "error",
+                "error_message": live_result.get(
+                    "error_message", "Live fallback failed."
+                ),
+            }
+            _store_measurement(purpose, final, methods_used, tool_context)
+            return final
+        methods_used.append("live")
+        final = dict(live_result)
+        final["measurement_method"] = "mixed"
+        final["dry_run_bytes"] = None
+        _store_measurement(purpose, final, methods_used, tool_context)
+        return final
+
+    dry_result["measurement_method"] = "dry_run"
+    _store_measurement(purpose, dry_result, methods_used, tool_context)
+    return dry_result

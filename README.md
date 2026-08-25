@@ -4,8 +4,9 @@ One-shot BigQuery SQL optimizer built with the [Agent Development Kit (ADK)](htt
 
 ## Features
 
-- **Pipeline architecture**: `SequentialAgent` with baseline → metadata → optimize/validate loop → structured report
-- **Cost measurement**: dry-run first, automatic live fallback when estimates are unreliable (clustering) or for final optimized verification
+- **Pipeline architecture**: metadata (discover tables + enrich) → baseline → optimize/validate loop → structured report
+- **Cost measurement**: live when tables are clustered or purpose is `optimized_final`; otherwise dry-run (reuses discovery cache for the same SQL)
+- **Table discovery**: BigQuery dry-run via `list_referenced_tables` — not LLM inference of FROM clauses
 - **Safety**: blocks DML/DDL; `maximum_bytes_billed` cap on live runs
 - **Deterministic checks**: SQL anti-patterns, output schema validation, readonly guardrails
 
@@ -38,11 +39,12 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 ## Architecture
 
 ```
-baseline_agent → metadata_agent → LoopAgent(optimizer, validator) → formatter_agent
+metadata_agent → baseline_agent → LoopAgent(optimizer, validator) → formatter_agent
 ```
 
 ### Tools
 
+- `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables`
 - `measure_query_cost(sql, purpose)` — baseline / optimized_probe / optimized_final
 - `get_table_metadata`, `get_partition_summary`, `get_view_definition`
 - `detect_sql_antipatterns`, `validate_output_schema`, `compare_query_stats`, `diff_sql`

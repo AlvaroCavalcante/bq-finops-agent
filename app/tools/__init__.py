@@ -1,6 +1,6 @@
 from app.tools.antipatterns import detect_sql_antipatterns
 from app.tools.compare import compare_query_stats, diff_sql, validate_output_schema
-from app.tools.measure_cost import measure_query_cost
+from app.tools.measure_cost import list_referenced_tables, measure_query_cost
 from app.tools.metadata import (
     get_partition_summary,
     get_table_metadata,
@@ -14,6 +14,7 @@ __all__ = [
     "get_partition_summary",
     "get_table_metadata",
     "get_view_definition",
+    "list_referenced_tables",
     "measure_query_cost",
     "validate_output_schema",
 ]

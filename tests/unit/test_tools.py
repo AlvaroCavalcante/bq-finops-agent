@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.callbacks import before_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
+from app.tools.measure_cost import list_referenced_tables, measure_query_cost
+from app.tools.metadata import get_table_metadata
 from app.tools.safety import is_readonly_select
 
 
@@ -85,3 +89,153 @@ def test_compare_query_stats_savings() -> None:
     assert result["bytes_saved"] == 600
     assert result["savings_pct"] == 60.0
     assert result["measurement_method"] == "mixed"
+
+
+class _FakeContext:
+    def __init__(self) -> None:
+        self.state: dict = {}
+
+
+def _fake_job(*, bytes_processed=100, tables=None):
+    refs = [
+        SimpleNamespace(project=p, dataset_id=d, table_id=t)
+        for p, d, t in (tables or [])
+    ]
+    return SimpleNamespace(
+        total_bytes_processed=bytes_processed,
+        referenced_tables=refs,
+        schema=None,
+        statement_type="SELECT",
+        job_id="job-1",
+    )
+
+
+def test_list_referenced_tables_writes_state() -> None:
+    ctx = _FakeContext()
+    job = _fake_job(tables=[("proj", "ds", "tbl")])
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = list_referenced_tables("SELECT 1 FROM `proj.ds.tbl`", ctx)
+    mock_run.assert_called_once_with("SELECT 1 FROM `proj.ds.tbl`", dry_run=True)
+    assert result["status"] == "success"
+    assert ctx.state["referenced_tables"] == [
+        {"project": "proj", "dataset": "ds", "table": "tbl"}
+    ]
+    assert ctx.state["discovery_sql"] == "SELECT 1 FROM `proj.ds.tbl`"
+    assert ctx.state["discovery_dry_run"]["total_bytes_processed"] == 100
+
+
+def test_list_referenced_tables_error_does_not_invent_tables() -> None:
+    ctx = _FakeContext()
+    with patch(
+        "app.tools.measure_cost._run_query",
+        side_effect=RuntimeError("syntax error"),
+    ):
+        result = list_referenced_tables("SELEKT", ctx)
+    assert result["status"] == "error"
+    assert "referenced_tables" not in ctx.state
+    assert "discovery_dry_run" not in ctx.state
+
+
+def test_measure_query_cost_reuses_discovery_cache() -> None:
+    ctx = _FakeContext()
+    sql = "SELECT 1"
+    ctx.state["discovery_sql"] = sql
+    ctx.state["discovery_dry_run"] = {
+        "status": "success",
+        "total_bytes_processed": 50,
+        "measurement_method": "dry_run",
+        "referenced_tables": [],
+        "output_schema": [],
+        "statement_type": "SELECT",
+        "job_id": "cached",
+    }
+    with patch("app.tools.measure_cost._run_query") as mock_run:
+        result = measure_query_cost(sql, "baseline", ctx)
+    mock_run.assert_not_called()
+    assert result["measurement_method"] == "dry_run"
+    assert result["total_bytes_processed"] == 50
+    assert ctx.state["baseline_measured"] is True
+
+
+def test_measure_query_cost_live_only_when_clustered() -> None:
+    ctx = _FakeContext()
+    ctx.state["has_clustering"] = True
+    job = _fake_job(bytes_processed=200)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = measure_query_cost("SELECT 1", "baseline", ctx)
+    mock_run.assert_called_once_with("SELECT 1", dry_run=False)
+    assert result["measurement_method"] == "live"
+    assert result["total_bytes_processed"] == 200
+
+
+def test_measure_query_cost_optimized_final_is_live_only() -> None:
+    ctx = _FakeContext()
+    job = _fake_job(bytes_processed=80)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = measure_query_cost("SELECT 2", "optimized_final", ctx)
+    mock_run.assert_called_once_with("SELECT 2", dry_run=False)
+    assert result["measurement_method"] == "live"
+    assert ctx.state["optimized_verified_live"] is True
+
+
+def test_measure_query_cost_dry_run_error_does_not_live() -> None:
+    ctx = _FakeContext()
+    with patch(
+        "app.tools.measure_cost._run_query",
+        side_effect=RuntimeError("invalid SQL"),
+    ) as mock_run:
+        result = measure_query_cost("SELEKT", "baseline", ctx)
+    mock_run.assert_called_once_with("SELEKT", dry_run=True)
+    assert result["status"] == "error"
+    assert ctx.state["baseline_measured"] is False
+
+
+def test_measure_query_cost_live_fallback_when_bytes_missing() -> None:
+    ctx = _FakeContext()
+    dry_job = _fake_job(bytes_processed=None)
+    live_job = _fake_job(bytes_processed=40)
+
+    def _side_effect(_sql: str, dry_run: bool):
+        return dry_job if dry_run else live_job
+
+    with patch("app.tools.measure_cost._run_query", side_effect=_side_effect) as mock_run:
+        result = measure_query_cost("SELECT 1", "optimized_probe", ctx)
+    assert mock_run.call_count == 2
+    assert result["measurement_method"] == "mixed"
+    assert result["total_bytes_processed"] == 40
+
+
+def test_get_table_metadata_sets_has_clustering() -> None:
+    ctx = _FakeContext()
+    tbl = MagicMock()
+    tbl.table_type = "TABLE"
+    tbl.num_bytes = 10
+    tbl.num_rows = 2
+    tbl.time_partitioning = None
+    tbl.range_partitioning = None
+    tbl.clustering_fields = ["customer_id"]
+    tbl.schema = []
+    client = MagicMock()
+    client.get_table.return_value = tbl
+    with patch("app.tools.metadata.get_bq_client", return_value=client):
+        result = get_table_metadata("p", "d", "t", ctx)
+    assert result["status"] == "success"
+    assert ctx.state["has_clustering"] is True
+    assert "p.d.t" in ctx.state["tables_metadata"]
+
+
+def test_get_table_metadata_without_clustering_sets_flag_false() -> None:
+    ctx = _FakeContext()
+    tbl = MagicMock()
+    tbl.table_type = "TABLE"
+    tbl.num_bytes = 10
+    tbl.num_rows = 2
+    tbl.time_partitioning = None
+    tbl.range_partitioning = None
+    tbl.clustering_fields = None
+    tbl.schema = []
+    client = MagicMock()
+    client.get_table.return_value = tbl
+    with patch("app.tools.metadata.get_bq_client", return_value=client):
+        get_table_metadata("p", "d", "t", ctx)
+    assert ctx.state["has_clustering"] is False

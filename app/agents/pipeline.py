@@ -9,7 +9,7 @@ from app.prompts import load_prompt
 from app.schemas import OptimizationReport
 from app.tools.antipatterns import detect_sql_antipatterns
 from app.tools.compare import compare_query_stats, diff_sql, validate_output_schema
-from app.tools.measure_cost import measure_query_cost
+from app.tools.measure_cost import list_referenced_tables, measure_query_cost
 from app.tools.metadata import (
     get_partition_summary,
     get_table_metadata,
@@ -44,6 +44,7 @@ metadata_agent = Agent(
     instruction=load_prompt("metadata"),
     description="Collects table metadata and SQL anti-patterns.",
     tools=[
+        list_referenced_tables,
         get_table_metadata,
         get_partition_summary,
         get_view_definition,
@@ -88,13 +89,13 @@ formatter_agent = Agent(
 root_agent = Workflow(
     name="bq_finops_agent",
     description=(
-        "One-shot BigQuery SQL optimizer: baseline, metadata, "
+        "One-shot BigQuery SQL optimizer: metadata, baseline, "
         "optimize/validate loop, then a structured report."
     ),
     edges=[
-        ("START", baseline_agent),
-        (baseline_agent, metadata_agent),
-        (metadata_agent, optimizer_agent),
+        ("START", metadata_agent),
+        (metadata_agent, baseline_agent),
+        (baseline_agent, optimizer_agent),
         (optimizer_agent, validator_agent),
         (validator_agent, decide_optimization_loop),
         (

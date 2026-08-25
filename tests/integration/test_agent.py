@@ -45,9 +45,9 @@ def test_root_agent_is_finops_workflow() -> None:
         (edge.from_node.name, edge.to_node.name, edge.route)
         for edge in root_agent.graph.edges
     }
-    assert ("__START__", "baseline_agent", None) in routed
-    assert ("baseline_agent", "metadata_agent", None) in routed
-    assert ("metadata_agent", "optimizer_agent", None) in routed
+    assert ("__START__", "metadata_agent", None) in routed
+    assert ("metadata_agent", "baseline_agent", None) in routed
+    assert ("baseline_agent", "optimizer_agent", None) in routed
     assert ("optimizer_agent", "validator_agent", None) in routed
     assert (
         "validator_agent",
@@ -74,3 +74,11 @@ def test_workflow_nodes_are_pipeline_agents() -> None:
     assert nodes["validator_agent"].name == validator_agent.name
     assert nodes["formatter_agent"].name == formatter_agent.name
     assert nodes["decide_optimization_loop"].name == decide_optimization_loop.__name__
+
+
+def test_metadata_agent_includes_discovery_tool() -> None:
+    names = [
+        getattr(tool, "name", None) or getattr(tool, "__name__", "")
+        for tool in metadata_agent.tools
+    ]
+    assert "list_referenced_tables" in names

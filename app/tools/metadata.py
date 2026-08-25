@@ -1,10 +1,30 @@
+from google.adk.tools import ToolContext
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
 from app.tools.bq_client import get_bq_client
 
 
-def get_table_metadata(project: str, dataset: str, table: str) -> dict:
+def _record_table_metadata(result: dict, tool_context: ToolContext | None) -> None:
+    if tool_context is None or result.get("status") != "success":
+        return
+    ref = f"{result['project']}.{result['dataset']}.{result['table']}"
+    tables = dict(tool_context.state.get("tables_metadata") or {})
+    tables[ref] = result
+    tool_context.state["tables_metadata"] = tables
+    tool_context.state["has_clustering"] = any(
+        bool(meta.get("clustering_fields"))
+        for meta in tables.values()
+        if meta.get("status") == "success"
+    )
+
+
+def get_table_metadata(
+    project: str,
+    dataset: str,
+    table: str,
+    tool_context: ToolContext | None = None,
+) -> dict:
     """Fetch BigQuery table metadata for optimization decisions.
 
     Args:
@@ -49,7 +69,7 @@ def get_table_metadata(project: str, dataset: str, table: str) -> dict:
         for f in tbl.schema
     ]
 
-    return {
+    result = {
         "status": "success",
         "project": project,
         "dataset": dataset,
@@ -67,6 +87,8 @@ def get_table_metadata(project: str, dataset: str, table: str) -> dict:
         ),
         "schema": schema,
     }
+    _record_table_metadata(result, tool_context)
+    return result
 
 
 def get_partition_summary(project: str, dataset: str, table: str) -> dict:
