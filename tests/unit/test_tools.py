@@ -258,5 +258,56 @@ def test_get_table_metadata_without_clustering_sets_flag_false() -> None:
     client = MagicMock()
     client.get_table.return_value = tbl
     with patch("app.tools.metadata.get_bq_client", return_value=client):
-        get_table_metadata("p", "d", "t", ctx)
+        result = get_table_metadata("p", "d", "t", ctx)
     assert ctx.state["has_clustering"] is False
+    assert result["primary_key_columns"] == []
+    assert result["foreign_keys"] == []
+
+
+def test_get_table_metadata_includes_primary_and_foreign_keys() -> None:
+    ctx = _FakeContext()
+    tbl = MagicMock()
+    tbl.table_type = "TABLE"
+    tbl.num_bytes = 10
+    tbl.num_rows = 2
+    tbl.time_partitioning = None
+    tbl.range_partitioning = None
+    tbl.clustering_fields = None
+    tbl.schema = []
+    tbl.table_constraints = SimpleNamespace(
+        primary_key=SimpleNamespace(columns=["order_id"]),
+        foreign_keys=[
+            SimpleNamespace(
+                name="fk_customer",
+                referenced_table=SimpleNamespace(
+                    project="p", dataset_id="d", table_id="customers"
+                ),
+                column_references=[
+                    SimpleNamespace(
+                        referencing_column="customer_id",
+                        referenced_column="id",
+                    )
+                ],
+            )
+        ],
+    )
+    client = MagicMock()
+    client.get_table.return_value = tbl
+    with patch("app.tools.metadata.get_bq_client", return_value=client):
+        result = get_table_metadata("p", "d", "orders", ctx)
+    assert result["primary_key_columns"] == ["order_id"]
+    assert result["foreign_keys"] == [
+        {
+            "name": "fk_customer",
+            "referenced_table": "p.d.customers",
+            "column_references": [
+                {
+                    "referencing_column": "customer_id",
+                    "referenced_column": "id",
+                }
+            ],
+        }
+    ]
+    assert ctx.state["tables_metadata"]["p.d.orders"]["primary_key_columns"] == [
+        "order_id"
+    ]

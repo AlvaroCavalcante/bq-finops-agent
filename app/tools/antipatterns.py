@@ -81,6 +81,8 @@ def detect_sql_antipatterns(sql: str, table_metadata_json: str) -> dict:
         )
         return {"status": "success", "findings": findings}
 
+    has_join = bool(re.search(r"\bJOIN\b", sql, re.IGNORECASE))
+
     for table_meta in metadata_map.values():
         if table_meta.get("status") != "success":
             continue
@@ -111,6 +113,22 @@ def detect_sql_antipatterns(sql: str, table_metadata_json: str) -> dict:
                         ),
                     }
                 )
+
+        pk_cols = table_meta.get("primary_key_columns") or []
+        fks = table_meta.get("foreign_keys") or []
+        if has_join and (pk_cols or fks):
+            findings.append(
+                {
+                    "pattern": "key_constraints_available",
+                    "severity": "medium",
+                    "message": (
+                        f"Table {table_meta.get('dataset')}.{table_meta.get('table')} "
+                        f"declares primary_key_columns={list(pk_cols)} and "
+                        f"{len(fks)} foreign key(s); consider join elimination "
+                        "when columns from the joined table are unused."
+                    ),
+                }
+            )
 
     for func in parsed.find_all(exp.Anonymous, exp.Func):
         parent = func.parent

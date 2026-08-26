@@ -5,6 +5,58 @@ from google.cloud.exceptions import NotFound
 from app.tools.bq_client import get_bq_client
 
 
+def _table_ref_str(ref) -> str | None:
+    if ref is None:
+        return None
+    project = getattr(ref, "project", None)
+    dataset = getattr(ref, "dataset_id", None)
+    table = getattr(ref, "table_id", None)
+    if project and dataset and table:
+        return f"{project}.{dataset}.{table}"
+    return None
+
+
+def _serialize_key_constraints(tbl) -> tuple[list[str], list[dict]]:
+    """Extract unenforced PK/FK from a Table resource (no extra API call)."""
+    constraints = getattr(tbl, "table_constraints", None)
+    if constraints is None:
+        return [], []
+
+    primary_key_columns: list[str] = []
+    pk = getattr(constraints, "primary_key", None)
+    columns = getattr(pk, "columns", None) if pk is not None else None
+    if isinstance(columns, (list, tuple)):
+        primary_key_columns = [str(c) for c in columns]
+
+    foreign_keys: list[dict] = []
+    fks = getattr(constraints, "foreign_keys", None)
+    if not isinstance(fks, (list, tuple)):
+        return primary_key_columns, foreign_keys
+
+    for fk in fks:
+        column_references = []
+        for cr in getattr(fk, "column_references", None) or []:
+            referencing = getattr(cr, "referencing_column", None)
+            referenced = getattr(cr, "referenced_column", None)
+            if referencing and referenced:
+                column_references.append(
+                    {
+                        "referencing_column": str(referencing),
+                        "referenced_column": str(referenced),
+                    }
+                )
+        foreign_keys.append(
+            {
+                "name": getattr(fk, "name", None),
+                "referenced_table": _table_ref_str(
+                    getattr(fk, "referenced_table", None)
+                ),
+                "column_references": column_references,
+            }
+        )
+    return primary_key_columns, foreign_keys
+
+
 def _record_table_metadata(result: dict, tool_context: ToolContext | None) -> None:
     if tool_context is None or result.get("status") != "success":
         return
@@ -33,7 +85,8 @@ def get_table_metadata(
         table: BigQuery table id.
 
     Returns:
-        dict with partitioning, clustering, schema, and size stats.
+        dict with partitioning, clustering, primary_key_columns, foreign_keys,
+        schema, and size stats.
     """
     client = get_bq_client()
     ref = f"{project}.{dataset}.{table}"
@@ -68,6 +121,7 @@ def get_table_metadata(
         {"name": f.name, "type": f.field_type, "mode": f.mode}
         for f in tbl.schema
     ]
+    primary_key_columns, foreign_keys = _serialize_key_constraints(tbl)
 
     result = {
         "status": "success",
@@ -80,6 +134,8 @@ def get_table_metadata(
         "time_partitioning": time_partitioning,
         "range_partitioning": range_partitioning,
         "clustering_fields": list(tbl.clustering_fields or []),
+        "primary_key_columns": primary_key_columns,
+        "foreign_keys": foreign_keys,
         "require_partition_filter": (
             time_partitioning.get("require_partition_filter")
             if time_partitioning
