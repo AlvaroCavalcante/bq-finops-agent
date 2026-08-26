@@ -1,18 +1,10 @@
-"""Run the BQ FinOps ADK workflow locally with step-level debug output.
-
-Preflight-checks Application Default Credentials, then executes the same
-root agent used by the playground, printing every agent/LLM/tool event.
+"""Local debug runner for the BQ FinOps agents.
 
 Usage (from repo root):
 
-    uv run python scripts/debug_run.py --auth-only
-    uv run python scripts/debug_run.py "SELECT 1"
-    uv run python scripts/debug_run.py --step --verbose "SELECT 1"
-
-On Windows, if the project path has non-ASCII characters:
-
-    set UV_PROJECT_ENVIRONMENT=C:\\venvs\\bq-finops-agent
-    uv run python scripts/debug_run.py --auth-only
+    uv run python scripts/debug_run.py
+    uv run python scripts/debug_run.py --agent metadata
+    uv run python scripts/debug_run.py --agent baseline "SELECT 1"
 """
 
 from __future__ import annotations
@@ -20,247 +12,167 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from google.adk.plugins import DebugLoggingPlugin, LoggingPlugin
-from google.adk.runners import InMemoryRunner
-from google.auth import default as google_auth_default
-from google.auth.exceptions import DefaultCredentialsError, RefreshError
-from google.auth.transport.requests import Request
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SQL = (
-    "SELECT word, word_count "
-    "FROM `bigquery-public-data.samples.shakespeare` "
-    "WHERE corpus = 'hamlet' "
-    "ORDER BY word_count DESC "
-    "LIMIT 20"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+load_dotenv(ROOT / ".env")
+logging.basicConfig(level=logging.DEBUG)
+
+from app.agent import root_agent  # noqa: E402
+from app.agents.pipeline import (  # noqa: E402
+    baseline_agent,
+    formatter_agent,
+    metadata_agent,
+    optimizer_agent,
+    validator_agent,
 )
 
-def _auth_fix() -> str:
-    project = os.getenv("GOOGLE_CLOUD_PROJECT") or "YOUR_GCP_PROJECT"
-    return f"""\
-ADC refresh failed (invalid_grant). The playground is not reaching Gemini
-because Application Default Credentials cannot mint a new access token.
+AGENTS = {
+    "root": root_agent,
+    "metadata": metadata_agent,
+    "baseline": baseline_agent,
+    "optimizer": optimizer_agent,
+    "validator": validator_agent,
+    "formatter": formatter_agent,
+}
 
-Fix (run in a terminal, then retry this script / the playground):
+PROMPT = """
+Otimize a seguinte query:
 
-  gcloud auth application-default login --project={project}
-  gcloud auth application-default set-quota-project {project}
+WITH
 
-If it still fails, revoke and login again:
+-- 1. IDENTIFICA A ÚLTIMA DATA DISPONÍVEL DE CADA MÊS (GLOBAL) ULTIMAS_DATAS_MES AS ( SELECT DATE_TRUNC(DATA_VISAO, DAY) AS mes_referencia, MAX(DATA_VISAO) AS ultima_data_mes FROM gc-pr-dl-001.dtl_bl_refined.TB_CARTOES_HIST_DIA WHERE STATUS_CONVENIO = 'A' AND STATUS_CONTA = 'ATIVO' -- AND CODIGO_CONVENIO NOT IN UNNEST(CONVENIOS_PRE) -- AND COD_GRUPO_CONVENIO NOT IN UNNEST(GRUPOS_OUT) AND TRIM(STATUS_CARTAO) <> 'CANCELADO'
+AND funcionalidade <> 'PRE-PAGO' AND DATE(DATA_VISAO) >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 42 DAY) AND EXTRACT(DAYOFWEEK FROM DATE(DATA_VISAO)) NOT IN (1, 7) GROUP BY 1 ),
 
-  gcloud auth application-default revoke
-  gcloud auth application-default login --project={project}
+-- 2. BASE DE CONTAS FILTRADA PELAS DATAS DE FECHAMENTO base_contas AS ( SELECT DISTINCT A.DATA_VISAO AS REFERENCIA, A.ID_CONTA, B.DATA_CANCELAMENTO_CONTA, FROM gc-pr-dl-001.dtl_bl_refined.TB_CARTOES_HIST_DIA A INNER JOIN ULTIMAS_DATAS_MES U ON A.DATA_VISAO = U.mes_referencia LEFT JOIN gc-pr-dl-001-cred.dtl_bl_refined.VM_CONTAS_NOVA B ON B.ID_CONTA = A.ID_CONTA WHERE A.STATUS_CONVENIO = 'A' -- AND A.CODIGO_CONVENIO NOT IN UNNEST(CONVENIOS_PRE) -- AND A.COD_GRUPO_CONVENIO NOT IN UNNEST(GRUPOS_OUT) AND A.STATUS_CONTA = 'ATIVO' AND TRIM(A.STATUS_CARTAO) <> 'CANCELADO'
+AND A.funcionalidade <> 'PRE-PAGO' AND DATE(A.DATA_VISAO) >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 42 DAY) AND EXTRACT(DAYOFWEEK FROM DATE(A.DATA_VISAO)) NOT IN (1, 7) ),
+
+SCORE_UNIFICADO AS (
+    SELECT
+        ID_CONTA,
+        DT_CARGA AS DT_REF,
+        CASE WHEN FL_FILTRO1 = 1 OR FL_FILTRO4 = 1 THEN 1 ELSE 0 END AS FL_S_SCORE,
+        NR_SCORE_COM_SCR as PROD_SCORE_COM_SCR,
+        NR_SCORE_SEM_SCR as PROD_SCORE_SEM_SCR,
+        FL_FILTRO1 AS PROD_FILTROS1,
+        FL_FILTRO4 AS PROD_FILTROS4,
+        FX_SCORE_COM_SCR,
+        FX_SCORE_SEM_SCR,
+        IF(NM_PERFIL_SCR IS NOT NULL, 1, 0) AS PROD_FL_SCR,
+        FX_SCORE_FINAL,
+        MAX(CASE WHEN NM_PERFIL_SCR IS NOT NULL THEN 1 ELSE 0 END) AS FL_SCR
+    FROM `gc-pr-dl-001-cred.modelagem.RF_SCORE_APPLICATION_OUTPUT` -- Tabela do Score Ref. de Produção Atual
+    GROUP BY ALL
+),
+
+    SCORE_BACKTEST_PROD AS (
+    SELECT
+        *,
+        -- Criação da janela de vigência do score utilizando a lógica de Turnover (LAG)
+        IFNULL(LAG(DT_REF) OVER(PARTITION BY ID_CONTA ORDER BY DT_REF DESC), CURRENT_DATETIME()) AS DT_REF_ATE
+    FROM SCORE_UNIFICADO
+),
+
+SEGMENTOS_UNICOS AS (
+    SELECT DISTINCT
+        IDGRUPOCONVENIO AS ID_GRUPO_CONVENIO,
+        MIN(B.SEGMENTO) AS SEGMENTO,
+        CASE WHEN MIN(DATACADASTRO) >= '2025-12-01' THEN 'NOVO' ELSE 'LEGADO' END AS FL_LEGADO_NOVO
+    FROM `gc-pr-dl-001.dtl_bl_raw.T_LOJA` A
+    LEFT JOIN `gc-pr-dl-001-cred.CREDITO_COBRANCA_PF.SEGMENTOS_CONVENIO_PF` B ON B.ID_CONVENIO = A.IDLOJA
+    WHERE IDGRUPOCONVENIO IS NOT NULL
+    GROUP BY ALL
+)
+
+-- 3. QUERY FINAL: RELATÓRIO DE AUDITORIA E COMPARAÇÃO
+SELECT
+A.REFERENCIA,
+A.DATA_CANCELAMENTO_CONTA,
+-- Cálculo da Maturação da Perda (MOB) baseado na data base de primeira compra do cliente
+        CASE
+            WHEN DATE_DIFF(DATE(A.DATA_CANCELAMENTO_CONTA), DATE(A.REFERENCIA), DAY) <= 30 THEN 0
+            ELSE DIV(DATE_DIFF(DATE(A.DATA_CANCELAMENTO_CONTA), DATE(A.REFERENCIA), DAY) - 1, 30)
+        END AS MOB,
+B.NOME_GRUPO_CONVENIO,
+  -- Agregação dos conceitos de negócios
+
+            CASE WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(B.DATA_ADMISSAO, B.DATA_CADASTRO_CONTA), DAY) <= 90 THEN 1 ELSE 0 END AS FLAG_MEN_90D,
+
+            CASE
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 1  THEN '01. Até 1 mes'
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 2  THEN '02. De 1 - 2 meses'
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 3  THEN '03. De 2 - 3 meses'
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 6  THEN '04. De 3 - 6 meses'
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 12 THEN '05. De 6 - 12 meses'
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 18 THEN '06. De 12 - 18 meses'
+              WHEN DATE_DIFF(DATE(A.REFERENCIA), IFNULL(DATE(B.DATA_ADMISSAO), DATE(B.DATA_CADASTRO_CONTA)), MONTH) <= 24 THEN '07. De 18 - 24 meses'
+              ELSE '08. Acima de 24 meses'
+            END AS FAIXA_TEMPO_ADMISSAO,
+
+            IFNULL(C.FL_LEGADO_NOVO, 'LEGADO') AS FL_LEGADO_NOVO,
+
+            -- Blocos de risco (Regras de Negócio)
+            CASE
+              WHEN IFNULL(C.FL_LEGADO_NOVO, 'LEGADO') = 'LEGADO' AND IF(DATE_DIFF(DATE(A.REFERENCIA), IFNULL(B.DATA_ADMISSAO, B.DATA_CADASTRO_CONTA), DAY) <= 90, 1, 0) = 0 AND IFNULL(P.FX_SCORE_FINAL, 12) IN (1, 2, 3, 12) THEN 'ALTO_RISCO_LEGADO'
+              WHEN IFNULL(C.FL_LEGADO_NOVO, 'LEGADO') = 'NOVO'   AND IF(DATE_DIFF(DATE(A.REFERENCIA), IFNULL(B.DATA_ADMISSAO, B.DATA_CADASTRO_CONTA), DAY) <= 90, 1, 0) = 0 AND IFNULL(P.FX_SCORE_FINAL, 12) IN (1, 2, 3, 4, 12) THEN 'ALTO_RISCO_NOVO'
+              WHEN IF(DATE_DIFF(DATE(A.REFERENCIA), IFNULL(B.DATA_ADMISSAO, B.DATA_CADASTRO_CONTA), DAY) <= 90, 1, 0) = 1          AND IFNULL(P.FX_SCORE_FINAL, 12) IN (1, 2, 3, 4, 12)                                 THEN 'ALTO_RISCO_<90DIAS'
+              ELSE 'BAIXO_RISCO'
+            END AS CLASSE_RISCO_PRODUCAO,
+  -- ==========================================
+  -- VISÃO PRODUÇÃO (SCORE_UNIFICADO)
+  -- ==========================================
+  P.FX_SCORE_COM_SCR,
+  P.FX_SCORE_SEM_SCR,
+  IFNULL(P.FX_SCORE_FINAL, 12) AS FX_SCORE_FINAL,
+
+  COUNT(DISTINCT A.ID_CONTA) AS QTD_CONTAS,
+  COUNT(DISTINCT
+                CASE WHEN A.DATA_CANCELAMENTO_CONTA IS NOT NULL THEN A.ID_CONTA ELSE NULL END) AS QTD_MAUS,
+
+FROM BASE_CONTAS                                        A                                                                                                         LEFT JOIN
+     SCORE_BACKTEST_PROD                                P ON P.ID_CONTA = A.ID_CONTA AND DATE(A.REFERENCIA) > P.DT_REF AND DATE(A.REFERENCIA) <= P.DT_REF_ATE     LEFT JOIN
+     `gc-pr-dl-001-cred.dtl_bl_refined.VM_CONTAS_NOVA`  B ON B.ID_CONTA = A.ID_CONTA                                                                              LEFT JOIN
+     SEGMENTOS_UNICOS                                   C ON C.ID_GRUPO_CONVENIO = B.ID_GRUPO_CONVENIO
+
+GROUP BY ALL
 """
 
 
-def _load_env() -> None:
-    env_path = ROOT / ".env"
-    if env_path.exists():
-        load_dotenv(env_path, override=False)
-    else:
-        print(f"WARNING: {env_path} not found. Copy .env.example to .env.")
-
-
-def check_adc(*, refresh: bool = True) -> None:
-    """Validate ADC before starting the agent. Exits 2 on auth failure."""
-    print("=== ADC preflight ===")
-    print(f"GOOGLE_CLOUD_PROJECT={os.getenv('GOOGLE_CLOUD_PROJECT')}")
-    print(f"GOOGLE_CLOUD_LOCATION={os.getenv('GOOGLE_CLOUD_LOCATION')}")
-    print(f"BQ_LOCATION={os.getenv('BQ_LOCATION')}")
-    print(f"GOOGLE_GENAI_USE_VERTEXAI={os.getenv('GOOGLE_GENAI_USE_VERTEXAI')}")
-    creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    print(f"GOOGLE_APPLICATION_CREDENTIALS={creds_path or '(unset, using ADC file)'}")
-
-    try:
-        creds, project = google_auth_default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-    except DefaultCredentialsError as exc:
-        print(f"ERROR: no Application Default Credentials: {exc}")
-        print(_auth_fix())
-        raise SystemExit(2) from exc
-
-    print(f"cred_type={type(creds).__name__}")
-    print(f"detected_project={project}")
-    print(f"quota_project={getattr(creds, 'quota_project_id', None)}")
-    print(f"expired={getattr(creds, 'expired', None)}")
-    print(f"valid={getattr(creds, 'valid', None)}")
-    print(f"has_refresh_token={bool(getattr(creds, 'refresh_token', None))}")
-
-    if not refresh:
-        print("ADC loaded (refresh skipped).")
-        return
-
-    try:
-        creds.refresh(Request())
-    except RefreshError as exc:
-        print(f"ERROR: {type(exc).__name__}: {exc}")
-        print(_auth_fix())
-        raise SystemExit(2) from exc
-
-    print("ADC refresh: ok")
-    print()
-
-
-def _format_event(event) -> str:
-    node = getattr(event, "node_name", "") or ""
-    path = ""
-    if getattr(event, "node_info", None) is not None:
-        path = event.node_info.path or ""
-    author = event.author or "?"
-    bits: list[str] = [f"author={author}"]
-    if node:
-        bits.append(f"node={node}")
-    if path:
-        bits.append(f"path={path}")
-    if event.error_code:
-        bits.append(f"ERROR {event.error_code}: {event.error_message}")
-    if event.actions and event.actions.route is not None:
-        bits.append(f"route={event.actions.route}")
-    if event.actions and event.actions.state_delta:
-        bits.append(f"state_delta={list(event.actions.state_delta)}")
-    fcs = event.get_function_calls()
-    if fcs:
-        bits.append("tools=" + ",".join(fc.name or "?" for fc in fcs))
-    frs = event.get_function_responses()
-    if frs:
-        bits.append("tool_results=" + ",".join(fr.name or "?" for fr in frs))
-    if event.output is not None:
-        preview = str(event.output)
-        if len(preview) > 240:
-            preview = preview[:240] + "..."
-        bits.append(f"output={preview!r}")
-    return " | ".join(bits)
-
-
-async def run_agent(prompt: str, *, step: bool, debug_file: Path) -> int:
-    from app.agent import app as adk_app
-
-    runner = InMemoryRunner(
-        app=adk_app,
-        plugins=[
-            LoggingPlugin(),
-            DebugLoggingPlugin(output_path=str(debug_file)),
-        ],
+async def main(prompt: str, agent_name: str) -> None:
+    session_service = InMemorySessionService()
+    session = await session_service.create_session(
+        user_id="debug",
+        app_name="debug",
     )
-    session = await runner.session_service.create_session(
-        app_name=adk_app.name,
-        user_id="debug-user",
+    runner = Runner(
+        agent=AGENTS[agent_name],
+        session_service=session_service,
+        app_name="debug",
     )
-    print(f"=== run session_id={session.id} app={adk_app.name} ===")
-    print(f"prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}")
-    print(f"yaml log: {debug_file}")
-    print()
-
-    message = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
-    event_index = 0
-    try:
-        async for event in runner.run_async(
-            user_id="debug-user",
-            session_id=session.id,
-            new_message=message,
-        ):
-            event_index += 1
-            print(f"[{event_index:03d}] {_format_event(event)}")
-            if step:
-                input("    (Enter to continue) ")
-    except RefreshError as exc:
-        print(f"ERROR during run: {type(exc).__name__}: {exc}")
-        print(_auth_fix())
-        return 2
-    except Exception as exc:
-        print(f"ERROR during run: {type(exc).__name__}: {exc}")
-        logging.exception("ADK run failed")
-        return 1
-
-    session = await runner.session_service.get_session(
-        app_name=adk_app.name,
-        user_id="debug-user",
+    message = types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=prompt)],
+    )
+    async for event in runner.run_async(
+        user_id="debug",
         session_id=session.id,
-    )
-    print()
-    print("=== session.state keys ===")
-    if session is not None:
-        for key in session.state:
-            value = session.state.get(key)
-            preview = str(value)
-            if len(preview) > 160:
-                preview = preview[:160] + "..."
-            print(f"  {key}: {preview}")
-    print(f"done. full YAML dump: {debug_file}")
-    return 0
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Debug-run the BQ FinOps ADK workflow."
-    )
-    parser.add_argument(
-        "prompt",
-        nargs="?",
-        default=DEFAULT_SQL,
-        help="User prompt / SQL to send to the agent.",
-    )
-    parser.add_argument(
-        "--auth-only",
-        action="store_true",
-        help="Only check Application Default Credentials, then exit.",
-    )
-    parser.add_argument(
-        "--skip-auth-check",
-        action="store_true",
-        help="Skip the ADC refresh preflight.",
-    )
-    parser.add_argument(
-        "--step",
-        action="store_true",
-        help="Pause after each runner event (press Enter).",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable DEBUG logs for google.adk (node scheduling, LLM flow).",
-    )
-    parser.add_argument(
-        "--debug-file",
-        default=str(ROOT / ".adk" / "debug_run.yaml"),
-        help="YAML path written by DebugLoggingPlugin.",
-    )
-    return parser.parse_args()
-
-
-def main() -> int:
-    os.chdir(ROOT)
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-
-    args = parse_args()
-    _load_env()
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    logging.getLogger("google_adk").setLevel(
-        logging.DEBUG if args.verbose else logging.INFO
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("google.auth").setLevel(logging.INFO)
-
-    check_adc(refresh=not args.skip_auth_check)
-    if args.auth_only:
-        return 0
-
-    debug_file = Path(args.debug_file)
-    debug_file.parent.mkdir(parents=True, exist_ok=True)
-    return asyncio.run(run_agent(args.prompt, step=args.step, debug_file=debug_file))
+        new_message=message,
+    ):
+        print(event)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description="Debug-run a BQ FinOps agent.")
+    parser.add_argument("prompt", nargs="?", default=PROMPT)
+    parser.add_argument("--agent", choices=AGENTS, default="root")
+    args = parser.parse_args()
+    asyncio.run(main(args.prompt, args.agent))

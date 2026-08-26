@@ -103,8 +103,6 @@ def get_partition_summary(project: str, dataset: str, table: str) -> dict:
         dict with partition count and min/max partition ids when available.
     """
     client = get_bq_client()
-    location = client.location or "US"
-    region = location if location.startswith("region-") else f"region-{location.lower()}"
 
     query = f"""
         SELECT
@@ -113,14 +111,12 @@ def get_partition_summary(project: str, dataset: str, table: str) -> dict:
           MAX(partition_id) AS max_partition_id,
           SUM(total_rows) AS total_rows,
           SUM(total_logical_bytes) AS total_logical_bytes
-        FROM `{project}.{region}.INFORMATION_SCHEMA.PARTITIONS`
+        FROM `{project}.{dataset}.INFORMATION_SCHEMA.PARTITIONS`
         WHERE table_name = @table_name
-          AND table_schema = @dataset
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("table_name", "STRING", table),
-            bigquery.ScalarQueryParameter("dataset", "STRING", dataset),
         ]
     )
     try:

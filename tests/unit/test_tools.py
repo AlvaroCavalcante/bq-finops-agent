@@ -21,7 +21,7 @@ import pytest
 from app.callbacks import before_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
 from app.tools.measure_cost import list_referenced_tables, measure_query_cost
-from app.tools.metadata import get_table_metadata
+from app.tools.metadata import get_partition_summary, get_table_metadata
 from app.tools.safety import is_readonly_select
 
 
@@ -222,6 +222,27 @@ def test_get_table_metadata_sets_has_clustering() -> None:
     assert result["status"] == "success"
     assert ctx.state["has_clustering"] is True
     assert "p.d.t" in ctx.state["tables_metadata"]
+
+
+def test_get_partition_summary_queries_dataset_information_schema() -> None:
+    row = SimpleNamespace(
+        partition_count=52,
+        min_partition_id="20240101",
+        max_partition_id="20241231",
+        total_rows=100,
+        total_logical_bytes=200,
+    )
+    job = MagicMock()
+    job.result.return_value = [row]
+    client = MagicMock()
+    client.query.return_value = job
+    with patch("app.tools.metadata.get_bq_client", return_value=client):
+        result = get_partition_summary("gc-pr-dl-001", "dtl_bl_refined", "TB_CARTOES_HIST_DIA")
+    assert result["status"] == "success"
+    assert result["partition_count"] == 52
+    sql = client.query.call_args.args[0]
+    assert "dtl_bl_refined.INFORMATION_SCHEMA.PARTITIONS" in sql
+    assert "region-" not in sql
 
 
 def test_get_table_metadata_without_clustering_sets_flag_false() -> None:
