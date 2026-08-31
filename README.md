@@ -4,7 +4,7 @@ One-shot BigQuery SQL optimizer built with the [Agent Development Kit (ADK)](htt
 
 ## Features
 
-- **Pipeline architecture**: metadata (discover tables + enrich) → baseline → optimize/validate loop → structured report
+- **Pipeline architecture**: metadata (discover tables + enrich + original-query bytes) → optimize/validate loop → structured report
 - **Cost measurement**: live when tables are clustered or purpose is `optimized_final`; otherwise dry-run (reuses discovery cache for the same SQL)
 - **Table discovery**: BigQuery dry-run via `list_referenced_tables` — not LLM inference of FROM clauses
 - **Safety**: blocks DML/DDL; `maximum_bytes_billed` cap on live runs
@@ -39,7 +39,7 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 ## Architecture
 
 ```
-metadata_agent → baseline_agent → LoopAgent(optimizer, validator) → formatter_agent
+metadata_agent → LoopAgent(optimizer, validator) → formatter_agent
 ```
 
 ### Tools

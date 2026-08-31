@@ -3,8 +3,7 @@
 Usage (from repo root):
 
     uv run python scripts/debug_run.py
-    uv run python scripts/debug_run.py --agent metadata
-    uv run python scripts/debug_run.py --agent baseline "SELECT 1"
+    uv run python scripts/debug_run.py --agent metadata "SELECT 1"
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ logging.basicConfig(level=logging.DEBUG)
 
 from app.agent import root_agent  # noqa: E402
 from app.agents.pipeline import (  # noqa: E402
-    baseline_agent,
     formatter_agent,
     metadata_agent,
     optimizer_agent,
@@ -39,7 +37,6 @@ from app.agents.pipeline import (  # noqa: E402
 AGENTS = {
     "root": root_agent,
     "metadata": metadata_agent,
-    "baseline": baseline_agent,
     "optimizer": optimizer_agent,
     "validator": validator_agent,
     "formatter": formatter_agent,

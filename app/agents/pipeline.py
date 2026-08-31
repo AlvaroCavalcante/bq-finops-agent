@@ -27,28 +27,20 @@ def _model() -> Gemini:
     )
 
 
-baseline_agent = Agent(
-    name="baseline_agent",
-    model=_model(),
-    instruction=load_prompt("baseline"),
-    description="Measures baseline bytes for the input SQL.",
-    tools=[measure_query_cost],
-    before_tool_callback=before_tool_callback,
-    include_contents=_INCLUDE_CONTENTS,
-    output_key="baseline_step",
-)
-
 metadata_agent = Agent(
     name="metadata_agent",
     model=_model(),
     instruction=load_prompt("metadata"),
-    description="Collects table metadata and SQL anti-patterns.",
+    description=(
+        "Collects table metadata, SQL anti-patterns, and baseline query bytes."
+    ),
     tools=[
         list_referenced_tables,
         get_table_metadata,
         get_partition_summary,
         get_view_definition,
         detect_sql_antipatterns,
+        measure_query_cost,
     ],
     before_tool_callback=before_tool_callback,
     include_contents=_INCLUDE_CONTENTS,
@@ -89,13 +81,12 @@ formatter_agent = Agent(
 root_agent = Workflow(
     name="bq_finops_agent",
     description=(
-        "One-shot BigQuery SQL optimizer: metadata, baseline, "
+        "One-shot BigQuery SQL optimizer: metadata, "
         "optimize/validate loop, then a structured report."
     ),
     edges=[
         ("START", metadata_agent),
-        (metadata_agent, baseline_agent),
-        (baseline_agent, optimizer_agent),
+        (metadata_agent, optimizer_agent),
         (optimizer_agent, validator_agent),
         (validator_agent, decide_optimization_loop),
         (

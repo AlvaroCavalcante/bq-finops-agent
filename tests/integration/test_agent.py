@@ -17,7 +17,6 @@ from google.adk.workflow import Workflow
 from app.agent import root_agent
 from app.agents.checkers import CONTINUE_ROUTE, EXIT_ROUTE, decide_optimization_loop
 from app.agents.pipeline import (
-    baseline_agent,
     formatter_agent,
     metadata_agent,
     optimizer_agent,
@@ -33,7 +32,6 @@ def test_root_agent_is_finops_workflow() -> None:
     node_names = {node.name for node in root_agent.graph.nodes}
     assert node_names == {
         "__START__",
-        "baseline_agent",
         "metadata_agent",
         "optimizer_agent",
         "validator_agent",
@@ -46,8 +44,7 @@ def test_root_agent_is_finops_workflow() -> None:
         for edge in root_agent.graph.edges
     }
     assert ("__START__", "metadata_agent", None) in routed
-    assert ("metadata_agent", "baseline_agent", None) in routed
-    assert ("baseline_agent", "optimizer_agent", None) in routed
+    assert ("metadata_agent", "optimizer_agent", None) in routed
     assert ("optimizer_agent", "validator_agent", None) in routed
     assert (
         "validator_agent",
@@ -68,7 +65,6 @@ def test_root_agent_is_finops_workflow() -> None:
 
 def test_workflow_nodes_are_pipeline_agents() -> None:
     nodes = {node.name: node for node in root_agent.graph.nodes}
-    assert nodes["baseline_agent"].name == baseline_agent.name
     assert nodes["metadata_agent"].name == metadata_agent.name
     assert nodes["optimizer_agent"].name == optimizer_agent.name
     assert nodes["validator_agent"].name == validator_agent.name
@@ -82,3 +78,4 @@ def test_metadata_agent_includes_discovery_tool() -> None:
         for tool in metadata_agent.tools
     ]
     assert "list_referenced_tables" in names
+    assert "measure_query_cost" in names

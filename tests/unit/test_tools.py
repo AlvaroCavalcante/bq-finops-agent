@@ -205,6 +205,38 @@ def test_measure_query_cost_live_fallback_when_bytes_missing() -> None:
     assert result["total_bytes_processed"] == 40
 
 
+def test_measure_query_cost_baseline_requires_table_metadata() -> None:
+    ctx = _FakeContext()
+    ctx.state["referenced_tables"] = [
+        {"project": "proj", "dataset": "ds", "table": "tbl"},
+    ]
+    with patch("app.tools.measure_cost._run_query") as mock_run:
+        result = measure_query_cost("SELECT 1 FROM `proj.ds.tbl`", "baseline", ctx)
+    mock_run.assert_not_called()
+    assert result["status"] == "error"
+    assert "get_table_metadata" in result["error_message"]
+    assert "proj.ds.tbl" in result["error_message"]
+    assert "baseline_measured" not in ctx.state
+
+
+def test_measure_query_cost_baseline_live_after_clustered_metadata() -> None:
+    ctx = _FakeContext()
+    ctx.state["referenced_tables"] = [
+        {"project": "proj", "dataset": "ds", "table": "tbl"},
+    ]
+    ctx.state["tables_metadata"] = {
+        "proj.ds.tbl": {"status": "success", "clustering_fields": ["id"]},
+    }
+    ctx.state["has_clustering"] = True
+    job = _fake_job(bytes_processed=200)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = measure_query_cost("SELECT 1 FROM `proj.ds.tbl`", "baseline", ctx)
+    mock_run.assert_called_once_with("SELECT 1 FROM `proj.ds.tbl`", dry_run=False)
+    assert result["measurement_method"] == "live"
+    assert result["total_bytes_processed"] == 200
+    assert ctx.state["baseline_measured"] is True
+
+
 def test_get_table_metadata_sets_has_clustering() -> None:
     ctx = _FakeContext()
     tbl = MagicMock()

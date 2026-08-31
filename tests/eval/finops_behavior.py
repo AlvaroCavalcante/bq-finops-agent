@@ -72,6 +72,7 @@ def evaluate_tool_trajectory(instance):
             "list_referenced_tables",
             "get_table_metadata",
             "detect_sql_antipatterns",
+            "measure_query_cost",
         },
     }.get(eval_id, set())
     if not expected:

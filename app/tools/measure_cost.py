@@ -75,6 +75,32 @@ def _store_measurement(
             tool_context.state["optimized_verified_live"] = True
 
 
+def _table_ref(table: dict) -> str:
+    return f"{table.get('project')}.{table.get('dataset')}.{table.get('table')}"
+
+
+def _baseline_blocked_without_metadata(tool_context: ToolContext) -> dict | None:
+    """Require table metadata before baseline when the SQL references tables."""
+    referenced = tool_context.state.get("referenced_tables") or []
+    if not referenced:
+        return None
+    tables_meta = tool_context.state.get("tables_metadata") or {}
+    missing = [
+        ref
+        for table in referenced
+        if (ref := _table_ref(table)) not in tables_meta
+    ]
+    if not missing:
+        return None
+    return {
+        "status": "error",
+        "error_message": (
+            "Collect table metadata with get_table_metadata before measuring "
+            "baseline. Missing: " + ", ".join(missing)
+        ),
+    }
+
+
 def _cached_dry_run(sql: str, tool_context: ToolContext) -> dict | None:
     cached = tool_context.state.get("discovery_dry_run")
     cached_sql = tool_context.state.get("discovery_sql")
@@ -119,6 +145,10 @@ def measure_query_cost(
     state. Does not look up table metadata. Reuses a discovery dry-run
     cache when measuring the same SQL on the dry-run path.
 
+    For purpose=baseline, refuses to run until get_table_metadata has
+    recorded every referenced table (so clustering is known). Queries
+    with no referenced tables are measured immediately.
+
     Args:
         sql: BigQuery SQL to measure.
         purpose: One of baseline, optimized_probe, or optimized_final.
@@ -126,6 +156,11 @@ def measure_query_cost(
     Returns:
         dict with bytes, measurement_method, schema, and referenced tables.
     """
+    if purpose == "baseline":
+        blocked = _baseline_blocked_without_metadata(tool_context)
+        if blocked is not None:
+            return blocked
+
     has_clustering = bool(tool_context.state.get("has_clustering"))
     use_live = purpose == "optimized_final" or has_clustering
     methods_used: list[str] = []

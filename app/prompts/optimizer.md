@@ -22,6 +22,6 @@ MANDATORY rules (Google BigQuery best practices):
 - Preserve exact final output column names, order, and types.
 - Do not answer SQL tutoring questions; only output the optimized SQL and a JSON list of changes_applied.
 
-Context from prior steps: antipatterns and table metadata are in the conversation/state.
+Context from prior steps: antipatterns, table metadata, and original-query bytes (baseline) are in the conversation/state (`metadata_step`).
 
 Output the optimized SQL in a fenced ```sql block and list changes_applied as JSON.
