@@ -118,8 +118,8 @@ def get_table_metadata(
         }
 
     schema = [
-        {"name": f.name, "type": f.field_type, "mode": f.mode}
-        for f in tbl.schema
+        {"name": field.name, "type": field.field_type, "mode": field.mode}
+        for field in tbl.schema
     ]
     primary_key_columns, foreign_keys = _serialize_key_constraints(tbl)
 
