@@ -37,7 +37,7 @@ MANDATORY rules (Google BigQuery best practices):
 - Preserve exact final output column names, order, and types.
 - Do not invent or rewrite tables_metadata; use the injected state as-is.
 
-You may call `diff_sql` with the rewritten SQL (`after`); original SQL is taken from state.
+You may call `diff_sql` with `before` equal to original_sql and `after` equal to the rewritten SQL. Do not omit `before`.
 
 The final response is structured automatically by OptimizerStep (optimized_sql, changes_applied, recommendations_not_applied).
 Do not answer SQL tutoring questions.

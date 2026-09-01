@@ -156,26 +156,19 @@ def _detect_sql_antipatterns(sql: str, metadata_map: dict) -> dict:
 
 
 def detect_sql_antipatterns(
-    sql: str | None = None,
+    sql: str,
     tool_context: ToolContext | None = None,
 ) -> dict:
     """Detect BigQuery SQL anti-patterns using table metadata from session state.
 
     Args:
-        sql: BigQuery SQL to analyze. Defaults to original_sql in session state.
-        tool_context: ADK tool context; tables_metadata is read from state.
+        sql: BigQuery SQL to analyze. Pass original_sql from the pipeline context.
 
     Returns:
         dict listing detected anti-patterns with severity and suggestion.
     """
-    resolved_sql = sql
-    metadata_map: dict = {}
-    if tool_context is not None:
-        resolved_sql = resolved_sql or tool_context.state.get("original_sql")
-        metadata_map = dict(tool_context.state.get("tables_metadata") or {})
-
-    if not resolved_sql:
-        result = dump_model(
+    if not sql:
+        return dump_model(
             AntipatternResult,
             {
                 "status": "error",
@@ -183,9 +176,12 @@ def detect_sql_antipatterns(
                 "error_message": "No SQL provided.",
             },
         )
-        return result
 
-    result = _detect_sql_antipatterns(resolved_sql, metadata_map)
+    metadata_map: dict = {}
+    if tool_context is not None:
+        metadata_map = dict(tool_context.state.get("tables_metadata") or {})
+
+    result = _detect_sql_antipatterns(sql, metadata_map)
     if tool_context is not None:
         tool_context.state["antipatterns"] = result.get("findings") or []
     return result

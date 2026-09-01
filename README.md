@@ -4,7 +4,7 @@ One-shot BigQuery SQL optimizer built with the [Agent Development Kit (ADK)](htt
 
 ## Features
 
-- **Pipeline architecture**: metadata (discover tables + enrich + original-query bytes) → optimize/validate loop → structured report
+- **Pipeline architecture**: input (SQL + context) → metadata (discover tables + enrich + original-query bytes) → optimize/validate loop → structured report
 - **Cost measurement**: live when tables are clustered or purpose is `optimized_final`; otherwise dry-run (reuses discovery cache for the same SQL)
 - **Table discovery**: BigQuery dry-run via `list_referenced_tables` — not LLM inference of FROM clauses
 - **Safety**: blocks DML/DDL; `maximum_bytes_billed` cap on live runs
@@ -39,20 +39,21 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 ## Architecture
 
 ```
-START → seed_pipeline_context → metadata_agent → optimizer_agent
+START → input_agent → seed_pipeline_context → metadata_agent → optimizer_agent
       → validator_agent → decide_optimization_loop → formatter_agent
 ```
 
-`app/agent.py` holds the workflow. `PipelineInput` is the graph input; each agent has an `output_schema` + `output_key`. Tools persist table metadata and measurements in session state (`{tables_metadata?}`, `{baseline?}`) instead of LLM-reconstructed JSON.
+`app/agent.py` holds the workflow. `input_agent` emits `PipelineInput`; seed copies `sql`/`context` to session state. Each later agent has an `output_schema` + `output_key`. Tools take explicit arguments (the agent copies `{original_sql?}` into `sql`). Large maps (`tables_metadata`, `baseline`) are persisted in session state so later prompts can inject them without the model rebuilding JSON.
 
 ### Tools
 
-- `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables` (sql defaults to `original_sql`)
-- `measure_query_cost(purpose, sql?)` — baseline / optimized_probe / optimized_final; SQL defaults from state
+- `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables`
+- `measure_query_cost(sql, purpose)` — baseline / optimized_probe / optimized_final
 - `get_table_metadata`, `get_partition_summary`, `get_view_definition` — persist into session state
-- `detect_sql_antipatterns` — reads `tables_metadata` from state
-- `validate_output_schema`, `compare_query_stats` — read baseline vs optimized measurements from state
-- `diff_sql(after)` — original SQL defaults to `original_sql`
+- `detect_sql_antipatterns(sql)` — reads `tables_metadata` from state
+- `validate_output_schema(original_schema, optimized_schema)` — persist schema check into state
+- `compare_query_stats(baseline_bytes, optimized_bytes, …)` — persist byte comparison into state
+- `diff_sql(before, after)` — unified diff of original vs rewritten SQL
 
 ## Output
 

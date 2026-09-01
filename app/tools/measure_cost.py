@@ -65,19 +65,6 @@ def _execute(sql: str, dry_run: bool) -> dict:
         return _as_measurement({"status": "error", "error_message": str(exc)})
 
 
-def _resolve_sql(sql: str | None, purpose: str, tool_context: ToolContext) -> str | None:
-    if sql:
-        return sql
-    if purpose == "baseline":
-        return tool_context.state.get("original_sql") or tool_context.state.get(
-            "discovery_sql"
-        )
-    step = tool_context.state.get("optimizer_step") or {}
-    if isinstance(step, dict) and step.get("optimized_sql"):
-        return str(step["optimized_sql"])
-    return tool_context.state.get("original_sql")
-
-
 def _store_measurement(
     purpose: str,
     final: dict,
@@ -135,7 +122,7 @@ def _cached_dry_run(sql: str, tool_context: ToolContext) -> dict | None:
 
 
 def list_referenced_tables(
-    sql: str | None = None,
+    sql: str,
     tool_context: ToolContext | None = None,
 ) -> dict:
     """Discover tables referenced by a SQL query via BigQuery dry-run.
@@ -143,34 +130,30 @@ def list_referenced_tables(
     Never executes the query. On failure, does not invent table names.
 
     Args:
-        sql: BigQuery SQL to inspect. Defaults to original_sql in session state.
+        sql: BigQuery SQL to inspect. Pass original_sql from the pipeline context.
 
     Returns:
         dict with referenced_tables on success, or status=error.
     """
-    if tool_context is None:
-        return _as_measurement(
-            {"status": "error", "error_message": "Missing tool context."}
-        )
-    resolved = sql or tool_context.state.get("original_sql")
-    if not resolved:
+    if not sql:
         return _as_measurement(
             {"status": "error", "error_message": "No SQL provided."}
         )
-    result = _execute(resolved, dry_run=True)
+    result = _execute(sql, dry_run=True)
     if result.get("status") != "success":
         return result
 
-    tool_context.state["referenced_tables"] = result.get("referenced_tables") or []
-    tool_context.state["discovery_dry_run"] = result
-    tool_context.state["discovery_sql"] = resolved
+    if tool_context is not None:
+        tool_context.state["referenced_tables"] = result.get("referenced_tables") or []
+        tool_context.state["discovery_dry_run"] = result
+        tool_context.state["discovery_sql"] = sql
     return result
 
 
 def measure_query_cost(
+    sql: str,
     purpose: str,
     tool_context: ToolContext,
-    sql: str | None = None,
 ) -> dict:
     """Measure BigQuery bytes processed for a SQL query.
 
@@ -183,22 +166,21 @@ def measure_query_cost(
     with no referenced tables are measured immediately.
 
     Args:
+        sql: BigQuery SQL to measure. Pass original_sql for baseline, or
+            optimizer_step.optimized_sql for optimized_probe / optimized_final.
         purpose: One of baseline, optimized_probe, or optimized_final.
-        sql: BigQuery SQL to measure. Defaults to original_sql (baseline)
-            or optimizer_step.optimized_sql (optimized_* purposes).
 
     Returns:
         dict with bytes, measurement_method, schema, and referenced tables.
     """
-    resolved = _resolve_sql(sql, purpose, tool_context)
-    if not resolved:
+    if not sql:
         final = _as_measurement(
-            {"status": "error", "error_message": "No SQL in state to measure."}
+            {"status": "error", "error_message": "No SQL provided."}
         )
         _store_measurement(purpose, final, [], tool_context)
         return final
 
-    ok, err = is_readonly_select(resolved)
+    ok, err = is_readonly_select(sql)
     if not ok:
         final = _as_measurement({"status": "error", "error_message": err})
         _store_measurement(purpose, final, [], tool_context)
@@ -214,16 +196,16 @@ def measure_query_cost(
     methods_used: list[str] = []
 
     if use_live:
-        final = _execute(resolved, dry_run=False)
+        final = _execute(sql, dry_run=False)
         if final.get("status") == "success":
             methods_used.append("live")
             final["measurement_method"] = "live"
         _store_measurement(purpose, final, methods_used, tool_context)
         return final
 
-    dry_result = _cached_dry_run(resolved, tool_context)
+    dry_result = _cached_dry_run(sql, tool_context)
     if dry_result is None:
-        dry_result = _execute(resolved, dry_run=True)
+        dry_result = _execute(sql, dry_run=True)
 
     if dry_result.get("status") != "success":
         _store_measurement(purpose, dry_result, methods_used, tool_context)
@@ -232,7 +214,7 @@ def measure_query_cost(
     methods_used.append("dry_run")
 
     if dry_result.get("total_bytes_processed") is None:
-        live_result = _execute(resolved, dry_run=False)
+        live_result = _execute(sql, dry_run=False)
         if live_result.get("status") != "success":
             final = _as_measurement(
                 {

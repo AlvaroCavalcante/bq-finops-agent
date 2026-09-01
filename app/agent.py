@@ -41,6 +41,16 @@ def _model() -> Gemini:
     )
 
 
+input_agent = Agent(
+    name="input_agent",
+    model=_model(),
+    instruction=load_prompt("input"),
+    description="Extracts SQL and optional context from the user message.",
+    output_schema=PipelineInput,
+    output_key="pipeline_input",
+    include_contents=_INCLUDE_CONTENTS,
+)
+
 metadata_agent = Agent(
     name="metadata_agent",
     model=_model(),
@@ -101,10 +111,10 @@ root_agent = Workflow(
         "One-shot BigQuery SQL optimizer: metadata, "
         "optimize/validate loop, then a structured report."
     ),
-    input_schema=PipelineInput,
     output_schema=OptimizationReport,
     edges=[
-        ("START", seed_pipeline_context),
+        ("START", input_agent),
+        (input_agent, seed_pipeline_context),
         (seed_pipeline_context, metadata_agent),
         (metadata_agent, optimizer_agent),
         (optimizer_agent, validator_agent),
@@ -127,6 +137,7 @@ app = App(
 __all__ = [
     "app",
     "root_agent",
+    "input_agent",
     "metadata_agent",
     "optimizer_agent",
     "validator_agent",

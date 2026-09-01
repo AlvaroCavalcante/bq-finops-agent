@@ -125,7 +125,7 @@ def test_detect_sql_antipatterns_reads_tables_metadata_from_state() -> None:
             "time_partitioning": {"field": "DATA_VISAO", "type": "DAY"},
         }
     }
-    result = detect_sql_antipatterns(tool_context=ctx)
+    result = detect_sql_antipatterns("SELECT id FROM t", tool_context=ctx)
     patterns = {f["pattern"] for f in result["findings"]}
     assert "missing_partition_filter" in patterns
     assert ctx.state["antipatterns"]

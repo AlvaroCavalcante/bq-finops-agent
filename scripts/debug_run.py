@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 from app.agent import (  # noqa: E402
     formatter_agent,
+    input_agent,
     metadata_agent,
     optimizer_agent,
     root_agent,
@@ -36,6 +37,7 @@ from app.agent import (  # noqa: E402
 
 AGENTS = {
     "root": root_agent,
+    "input": input_agent,
     "metadata": metadata_agent,
     "optimizer": optimizer_agent,
     "validator": validator_agent,

@@ -14,7 +14,8 @@
 
 from types import SimpleNamespace
 
-from google.genai import types
+import pytest
+from pydantic import ValidationError
 
 from app.schemas import PipelineInput
 from app.tools.pipeline import (
@@ -22,7 +23,6 @@ from app.tools.pipeline import (
     EXIT_ROUTE,
     MAX_OPTIMIZATION_ITERATIONS,
     decide_optimization_loop,
-    extract_sql,
     seed_pipeline_context,
 )
 
@@ -55,50 +55,38 @@ def _passing_validation_state(**extra):
     return state
 
 
-def test_extract_sql_from_fenced_block() -> None:
-    text = "Please optimize:\n```sql\nSELECT 1\n```\nthanks"
-    assert extract_sql(text) == "SELECT 1"
-
-
-def test_extract_sql_from_leading_prose() -> None:
-    text = "Otimize a seguinte query:\n\nSELECT * FROM t WHERE x = 1"
-    assert extract_sql(text).startswith("SELECT")
-
-
-def test_seed_pipeline_context_json() -> None:
-    event = seed_pipeline_context('{"sql": "SELECT 1", "context": "nightly"}')
+def test_seed_pipeline_context_from_model() -> None:
+    event = seed_pipeline_context(
+        PipelineInput(sql="SELECT 1", context="nightly")
+    )
     assert event.output["sql"] == "SELECT 1"
     assert event.actions.state_delta["original_sql"] == "SELECT 1"
     assert event.actions.state_delta["user_context"] == "nightly"
-
-
-def test_seed_pipeline_context_dict() -> None:
-    event = seed_pipeline_context({"sql": "SELECT 2"})
-    assert event.output["sql"] == "SELECT 2"
-
-
-def test_seed_pipeline_context_persists_original_sql() -> None:
-    event = seed_pipeline_context("Otimize:\nSELECT 1 FROM t")
-    assert event.output["sql"].startswith("SELECT")
-    assert event.actions.state_delta["original_sql"].startswith("SELECT")
     assert "input_error" not in event.actions.state_delta
 
 
+def test_seed_pipeline_context_from_dict() -> None:
+    event = seed_pipeline_context({"sql": "SELECT 2"})
+    assert event.output["sql"] == "SELECT 2"
+    assert event.actions.state_delta["original_sql"] == "SELECT 2"
+    assert event.actions.state_delta["user_context"] is None
+
+
+def test_seed_pipeline_context_from_json_string() -> None:
+    event = seed_pipeline_context('{"sql": "SELECT 3", "context": "batch"}')
+    assert event.output["sql"] == "SELECT 3"
+    assert event.actions.state_delta["user_context"] == "batch"
+
+
 def test_seed_pipeline_context_rejects_dml() -> None:
-    event = seed_pipeline_context("DELETE FROM t WHERE 1=1")
+    event = seed_pipeline_context(PipelineInput(sql="DELETE FROM t WHERE 1=1"))
     assert event.actions.state_delta["input_error"]
     assert event.output["sql"].upper().startswith("DELETE")
 
 
-def test_seed_pipeline_context_from_content() -> None:
-    content = types.Content(
-        role="user",
-        parts=[types.Part.from_text(text="WITH x AS (SELECT 1) SELECT * FROM x")],
-    )
-    event = seed_pipeline_context(content)
-    assert event.output["sql"].upper().startswith("WITH")
-    parsed = PipelineInput.model_validate(event.output)
-    assert parsed.sql.upper().startswith("WITH")
+def test_seed_pipeline_context_rejects_free_text() -> None:
+    with pytest.raises(ValidationError):
+        seed_pipeline_context("Otimize:\nSELECT 1 FROM t")
 
 
 def test_exits_when_validation_checks_pass() -> None:

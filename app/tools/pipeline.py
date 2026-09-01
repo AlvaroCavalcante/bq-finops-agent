@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from google.adk.agents.context import Context
 from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
-from pydantic import ValidationError
 
 from app.schemas import PipelineInput
 from app.tools.safety import is_readonly_select
@@ -18,52 +15,17 @@ MAX_OPTIMIZATION_ITERATIONS = 3
 CONTINUE_ROUTE = "continue"
 EXIT_ROUTE = "exit"
 
-_SQL_FENCE = re.compile(r"```(?:sql)?\s*\n(.*?)```", re.IGNORECASE | re.DOTALL)
-_SQL_START = re.compile(r"\b(WITH|SELECT)\b", re.IGNORECASE)
-
-
-def extract_sql(text: str) -> str:
-    """Pull SQL from a fenced block or from the first SELECT/WITH onward."""
-    stripped = text.strip()
-    fences = _SQL_FENCE.findall(stripped)
-    if fences:
-        return fences[0].strip()
-    match = _SQL_START.search(stripped)
-    if match:
-        return stripped[match.start() :].strip()
-    return stripped
-
-
-def _content_text(node_input: Any) -> str:
-    if node_input is None:
-        return ""
-    if isinstance(node_input, str):
-        return node_input
-    parts = getattr(node_input, "parts", None)
-    if parts is not None:
-        return "".join(getattr(part, "text", "") or "" for part in parts)
-    return str(node_input)
-
 
 def _as_pipeline_input(node_input: Any) -> PipelineInput:
     if isinstance(node_input, PipelineInput):
         return node_input
-    if isinstance(node_input, dict) and "sql" in node_input:
-        return PipelineInput.model_validate(node_input)
-    text = _content_text(node_input).strip()
-    if text.startswith("{"):
-        try:
-            return PipelineInput.model_validate_json(text)
-        except ValidationError:
-            try:
-                return PipelineInput.model_validate(json.loads(text))
-            except (ValidationError, json.JSONDecodeError):
-                pass
-    return PipelineInput(sql=extract_sql(text), context=None)
+    if isinstance(node_input, str):
+        return PipelineInput.model_validate_json(node_input)
+    return PipelineInput.model_validate(node_input)
 
 
 def seed_pipeline_context(node_input: Any) -> Event:
-    """Persist PipelineInput on session state for later nodes and tools."""
+    """Copy PipelineInput onto session state for later nodes and tools."""
     parsed = _as_pipeline_input(node_input)
     ok, err = is_readonly_select(parsed.sql)
     state: dict[str, Any] = {

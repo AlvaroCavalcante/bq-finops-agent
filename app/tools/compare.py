@@ -8,13 +8,6 @@ from app.schemas import CompareResult, SchemaCheck, dump_model
 from app.tools.bq_client import get_usd_per_tib
 
 
-def _schema_fields(measurement: dict | None) -> list[dict]:
-    if not isinstance(measurement, dict):
-        return []
-    data = measurement.get("output_schema")
-    return data if isinstance(data, list) else []
-
-
 def _compare_column_schemas(original: list, optimized: list) -> dict:
     mismatches: list[str] = []
     if len(original) != len(optimized):
@@ -87,61 +80,80 @@ def _compare_measurements(before: dict, after: dict) -> dict:
     }
 
 
-def validate_output_schema(tool_context: ToolContext) -> dict:
+def validate_output_schema(
+    original_schema: list,
+    optimized_schema: list,
+    tool_context: ToolContext | None = None,
+) -> dict:
     """Verify optimized query preserves final output column names and types.
 
-    Reads baseline and optimized_measurement.output_schema from session state.
+    Args:
+        original_schema: Column list from baseline.output_schema
+            (each item: name, type, optional mode).
+        optimized_schema: Column list from the optimized measurement
+            output_schema, same shape as original_schema.
 
     Returns:
         dict with passed flag and any mismatches.
     """
-    original = _schema_fields(tool_context.state.get("baseline"))
-    optimized = _schema_fields(tool_context.state.get("optimized_measurement"))
-    result = dump_model(SchemaCheck, _compare_column_schemas(original, optimized))
-    tool_context.state["schema_check"] = result
+    result = dump_model(
+        SchemaCheck,
+        _compare_column_schemas(original_schema or [], optimized_schema or []),
+    )
+    if tool_context is not None:
+        tool_context.state["schema_check"] = result
     return result
 
 
-def compare_query_stats(tool_context: ToolContext) -> dict:
+def compare_query_stats(
+    baseline_bytes: int,
+    optimized_bytes: int,
+    baseline_method: str = "dry_run",
+    optimized_method: str = "dry_run",
+    tool_context: ToolContext | None = None,
+) -> dict:
     """Compare bytes processed and estimate on-demand savings.
 
-    Reads baseline and optimized_measurement from session state.
+    Args:
+        baseline_bytes: total_bytes_processed from the baseline measurement.
+        optimized_bytes: total_bytes_processed from the optimized measurement.
+        baseline_method: measurement_method of the baseline (dry_run, live, mixed).
+        optimized_method: measurement_method of the optimized run.
 
     Returns:
         dict with bytes delta, savings percentage, and USD estimates.
     """
-    before = tool_context.state.get("baseline") or {}
-    after = tool_context.state.get("optimized_measurement") or {}
-    if not isinstance(before, dict):
-        before = {}
-    if not isinstance(after, dict):
-        after = {}
-    result = dump_model(CompareResult, _compare_measurements(before, after))
-    tool_context.state["compare"] = result
+    result = dump_model(
+        CompareResult,
+        _compare_measurements(
+            {
+                "total_bytes_processed": baseline_bytes,
+                "measurement_method": baseline_method,
+            },
+            {
+                "total_bytes_processed": optimized_bytes,
+                "measurement_method": optimized_method,
+            },
+        ),
+    )
+    if tool_context is not None:
+        tool_context.state["compare"] = result
     return result
 
 
-def diff_sql(
-    after: str,
-    tool_context: ToolContext | None = None,
-    before: str | None = None,
-) -> dict:
+def diff_sql(before: str, after: str) -> dict:
     """Produce a unified diff between original and optimized SQL.
 
     Args:
-        after: Optimized SQL.
-        before: Original SQL. Defaults to original_sql in session state.
+        before: Original SQL. Pass original_sql from the pipeline context.
+        after: Rewritten SQL from this optimization step.
 
     Returns:
         dict with unified diff text.
     """
-    original = before
-    if original is None and tool_context is not None:
-        original = tool_context.state.get("original_sql")
-    original = original or ""
     diff = difflib.unified_diff(
-        original.splitlines(),
-        after.splitlines(),
+        (before or "").splitlines(),
+        (after or "").splitlines(),
         fromfile="original.sql",
         tofile="optimized.sql",
         lineterm="",
