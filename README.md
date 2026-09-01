@@ -39,15 +39,20 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 ## Architecture
 
 ```
-metadata_agent → LoopAgent(optimizer, validator) → formatter_agent
+START → seed_pipeline_context → metadata_agent → optimizer_agent
+      → validator_agent → decide_optimization_loop → formatter_agent
 ```
+
+`app/agent.py` holds the workflow. `PipelineInput` is the graph input; each agent has an `output_schema` + `output_key`. Tools persist table metadata and measurements in session state (`{tables_metadata?}`, `{baseline?}`) instead of LLM-reconstructed JSON.
 
 ### Tools
 
-- `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables`
-- `measure_query_cost(sql, purpose)` — baseline / optimized_probe / optimized_final
-- `get_table_metadata`, `get_partition_summary`, `get_view_definition`
-- `detect_sql_antipatterns`, `validate_output_schema`, `compare_query_stats`, `diff_sql`
+- `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables` (sql defaults to `original_sql`)
+- `measure_query_cost(purpose, sql?)` — baseline / optimized_probe / optimized_final; SQL defaults from state
+- `get_table_metadata`, `get_partition_summary`, `get_view_definition` — persist into session state
+- `detect_sql_antipatterns` — reads `tables_metadata` from state
+- `validate_output_schema`, `compare_query_stats` — read baseline vs optimized measurements from state
+- `diff_sql(after)` — original SQL defaults to `original_sql`
 
 ## Output
 

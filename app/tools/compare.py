@@ -1,33 +1,21 @@
 from __future__ import annotations
 
 import difflib
-import json
 
+from google.adk.tools import ToolContext
+
+from app.schemas import CompareResult, SchemaCheck, dump_model
 from app.tools.bq_client import get_usd_per_tib
 
 
-def _normalize_schema(schema_json: str) -> list[dict]:
-    data = json.loads(schema_json)
-    if isinstance(data, dict) and "output_schema" in data:
-        data = data["output_schema"]
-    if isinstance(data, list):
-        return data
-    return []
+def _schema_fields(measurement: dict | None) -> list[dict]:
+    if not isinstance(measurement, dict):
+        return []
+    data = measurement.get("output_schema")
+    return data if isinstance(data, list) else []
 
 
-def validate_output_schema(original_schema_json: str, optimized_schema_json: str) -> dict:
-    """Verify optimized query preserves final output column names and types.
-
-    Args:
-        original_schema_json: JSON list of baseline output schema fields.
-        optimized_schema_json: JSON list of optimized output schema fields.
-
-    Returns:
-        dict with passed flag and any mismatches.
-    """
-    original = _normalize_schema(original_schema_json)
-    optimized = _normalize_schema(optimized_schema_json)
-
+def _compare_column_schemas(original: list, optimized: list) -> dict:
     mismatches: list[str] = []
     if len(original) != len(optimized):
         mismatches.append(
@@ -35,6 +23,10 @@ def validate_output_schema(original_schema_json: str, optimized_schema_json: str
         )
 
     for i, (o, n) in enumerate(zip(original, optimized, strict=False)):
+        if not isinstance(o, dict):
+            o = {}
+        if not isinstance(n, dict):
+            n = {}
         if o.get("name") != n.get("name"):
             mismatches.append(
                 f"Column {i}: name '{o.get('name')}' vs '{n.get('name')}'."
@@ -44,27 +36,14 @@ def validate_output_schema(original_schema_json: str, optimized_schema_json: str
                 f"Column {i}: type '{o.get('type')}' vs '{n.get('type')}'."
             )
 
-    passed = len(mismatches) == 0
     return {
         "status": "success",
-        "passed": passed,
+        "passed": len(mismatches) == 0,
         "mismatches": mismatches,
     }
 
 
-def compare_query_stats(before_json: str, after_json: str) -> dict:
-    """Compare bytes processed and estimate on-demand savings.
-
-    Args:
-        before_json: JSON measurement result for baseline query.
-        after_json: JSON measurement result for optimized query.
-
-    Returns:
-        dict with bytes delta, savings percentage, and USD estimates.
-    """
-    before = json.loads(before_json)
-    after = json.loads(after_json)
-
+def _compare_measurements(before: dict, after: dict) -> dict:
     baseline_bytes = int(before.get("total_bytes_processed") or 0)
     optimized_bytes = int(after.get("total_bytes_processed") or 0)
     bytes_saved = max(0, baseline_bytes - optimized_bytes)
@@ -108,18 +87,60 @@ def compare_query_stats(before_json: str, after_json: str) -> dict:
     }
 
 
-def diff_sql(before: str, after: str) -> dict:
+def validate_output_schema(tool_context: ToolContext) -> dict:
+    """Verify optimized query preserves final output column names and types.
+
+    Reads baseline and optimized_measurement.output_schema from session state.
+
+    Returns:
+        dict with passed flag and any mismatches.
+    """
+    original = _schema_fields(tool_context.state.get("baseline"))
+    optimized = _schema_fields(tool_context.state.get("optimized_measurement"))
+    result = dump_model(SchemaCheck, _compare_column_schemas(original, optimized))
+    tool_context.state["schema_check"] = result
+    return result
+
+
+def compare_query_stats(tool_context: ToolContext) -> dict:
+    """Compare bytes processed and estimate on-demand savings.
+
+    Reads baseline and optimized_measurement from session state.
+
+    Returns:
+        dict with bytes delta, savings percentage, and USD estimates.
+    """
+    before = tool_context.state.get("baseline") or {}
+    after = tool_context.state.get("optimized_measurement") or {}
+    if not isinstance(before, dict):
+        before = {}
+    if not isinstance(after, dict):
+        after = {}
+    result = dump_model(CompareResult, _compare_measurements(before, after))
+    tool_context.state["compare"] = result
+    return result
+
+
+def diff_sql(
+    after: str,
+    tool_context: ToolContext | None = None,
+    before: str | None = None,
+) -> dict:
     """Produce a unified diff between original and optimized SQL.
 
     Args:
-        before: Original SQL.
         after: Optimized SQL.
+        before: Original SQL. Defaults to original_sql in session state.
 
     Returns:
         dict with unified diff text.
     """
+    original = before
+    if original is None and tool_context is not None:
+        original = tool_context.state.get("original_sql")
+    original = original or ""
     diff = difflib.unified_diff(
-        before.splitlines(),
+        original.splitlines(),
         after.splitlines(),
         fromfile="original.sql",
         tofile="optimized.sql",

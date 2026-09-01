@@ -1,37 +1,19 @@
 from __future__ import annotations
 
-import json
 import re
 
 import sqlglot
+from google.adk.tools import ToolContext
 from sqlglot import exp
+
+from app.schemas import AntipatternResult, dump_model
 
 _WILDCARD_TABLE = re.compile(r"`[^`]+\.\*`|\b\w+\.\*`", re.IGNORECASE)
 
 
-def detect_sql_antipatterns(sql: str, table_metadata_json: str) -> dict:
-    """Detect BigQuery SQL anti-patterns deterministically.
-
-    Args:
-        sql: BigQuery SQL to analyze.
-        table_metadata_json: JSON string mapping table refs to metadata dicts.
-
-    Returns:
-        dict listing detected anti-patterns with severity and suggestion.
-    """
+def _detect_sql_antipatterns(sql: str, metadata_map: dict) -> dict:
+    """Detect BigQuery SQL anti-patterns from SQL and a metadata map."""
     findings: list[dict] = []
-    metadata_map: dict = {}
-    if table_metadata_json:
-        try:
-            metadata_map = json.loads(table_metadata_json)
-        except json.JSONDecodeError:
-            findings.append(
-                {
-                    "pattern": "invalid_metadata_json",
-                    "severity": "warning",
-                    "message": "Could not parse table_metadata_json.",
-                }
-            )
 
     if re.search(r"SELECT\s+\*", sql, re.IGNORECASE):
         findings.append(
@@ -79,16 +61,21 @@ def detect_sql_antipatterns(sql: str, table_metadata_json: str) -> dict:
                 "message": f"SQL parse failed: {exc}",
             }
         )
-        return {"status": "success", "findings": findings}
+        return dump_model(AntipatternResult, {"status": "success", "findings": findings})
 
     has_join = bool(re.search(r"\bJOIN\b", sql, re.IGNORECASE))
 
     for table_meta in metadata_map.values():
-        if table_meta.get("status") != "success":
+        if not isinstance(table_meta, dict):
             continue
-        part_field = None
+        if table_meta.get("status") == "error":
+            continue
         tp = table_meta.get("time_partitioning") or {}
-        part_field = tp.get("field") or "_PARTITIONTIME"
+        if not isinstance(tp, dict):
+            tp = {}
+        part_field = tp.get("field")
+        if not part_field and tp.get("type"):
+            part_field = "_PARTITIONTIME"
         if part_field and part_field not in sql:
             if not re.search(r"_PARTITIONTIME|_PARTITIONDATE", sql, re.IGNORECASE):
                 findings.append(
@@ -98,6 +85,22 @@ def detect_sql_antipatterns(sql: str, table_metadata_json: str) -> dict:
                         "message": (
                             f"Table {table_meta.get('dataset')}.{table_meta.get('table')} "
                             f"is partitioned on '{part_field}' but query may lack partition filter."
+                        ),
+                    }
+                )
+
+        rp = table_meta.get("range_partitioning") or {}
+        if isinstance(rp, dict) and rp.get("field"):
+            range_field = rp["field"]
+            if range_field not in sql:
+                findings.append(
+                    {
+                        "pattern": "missing_partition_filter",
+                        "severity": "high",
+                        "message": (
+                            f"Table {table_meta.get('dataset')}.{table_meta.get('table')} "
+                            f"is range-partitioned on '{range_field}' but query may lack "
+                            "partition filter."
                         ),
                     }
                 )
@@ -149,4 +152,40 @@ def detect_sql_antipatterns(sql: str, table_metadata_json: str) -> dict:
                 )
                 break
 
-    return {"status": "success", "findings": findings}
+    return dump_model(AntipatternResult, {"status": "success", "findings": findings})
+
+
+def detect_sql_antipatterns(
+    sql: str | None = None,
+    tool_context: ToolContext | None = None,
+) -> dict:
+    """Detect BigQuery SQL anti-patterns using table metadata from session state.
+
+    Args:
+        sql: BigQuery SQL to analyze. Defaults to original_sql in session state.
+        tool_context: ADK tool context; tables_metadata is read from state.
+
+    Returns:
+        dict listing detected anti-patterns with severity and suggestion.
+    """
+    resolved_sql = sql
+    metadata_map: dict = {}
+    if tool_context is not None:
+        resolved_sql = resolved_sql or tool_context.state.get("original_sql")
+        metadata_map = dict(tool_context.state.get("tables_metadata") or {})
+
+    if not resolved_sql:
+        result = dump_model(
+            AntipatternResult,
+            {
+                "status": "error",
+                "findings": [],
+                "error_message": "No SQL provided.",
+            },
+        )
+        return result
+
+    result = _detect_sql_antipatterns(resolved_sql, metadata_map)
+    if tool_context is not None:
+        tool_context.state["antipatterns"] = result.get("findings") or []
+    return result

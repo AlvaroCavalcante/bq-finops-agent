@@ -26,11 +26,11 @@ if str(ROOT) not in sys.path:
 load_dotenv(ROOT / ".env")
 logging.basicConfig(level=logging.DEBUG)
 
-from app.agent import root_agent  # noqa: E402
-from app.agents.pipeline import (  # noqa: E402
+from app.agent import (  # noqa: E402
     formatter_agent,
     metadata_agent,
     optimizer_agent,
+    root_agent,
     validator_agent,
 )
 

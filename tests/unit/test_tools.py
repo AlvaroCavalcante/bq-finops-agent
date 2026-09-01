@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from app.callbacks import before_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
@@ -69,26 +66,43 @@ def test_before_tool_callback_skips_tools_without_sql_args() -> None:
 
 
 def test_validate_output_schema_passes_matching_columns() -> None:
-    original = json.dumps([{"name": "a", "type": "INT64", "mode": "NULLABLE"}])
-    optimized = json.dumps([{"name": "a", "type": "INT64", "mode": "NULLABLE"}])
-    result = validate_output_schema(original, optimized)
+    ctx = _FakeContext()
+    ctx.state["baseline"] = {
+        "output_schema": [{"name": "a", "type": "INT64", "mode": "NULLABLE"}]
+    }
+    ctx.state["optimized_measurement"] = {
+        "output_schema": [{"name": "a", "type": "INT64", "mode": "NULLABLE"}]
+    }
+    result = validate_output_schema(ctx)
     assert result["passed"] is True
+    assert ctx.state["schema_check"]["passed"] is True
 
 
 def test_validate_output_schema_fails_on_rename() -> None:
-    original = json.dumps([{"name": "a", "type": "INT64"}])
-    optimized = json.dumps([{"name": "b", "type": "INT64"}])
-    result = validate_output_schema(original, optimized)
+    ctx = _FakeContext()
+    ctx.state["baseline"] = {"output_schema": [{"name": "a", "type": "INT64"}]}
+    ctx.state["optimized_measurement"] = {
+        "output_schema": [{"name": "b", "type": "INT64"}]
+    }
+    result = validate_output_schema(ctx)
     assert result["passed"] is False
 
 
 def test_compare_query_stats_savings() -> None:
-    before = json.dumps({"total_bytes_processed": 1000, "measurement_method": "dry_run"})
-    after = json.dumps({"total_bytes_processed": 400, "measurement_method": "live"})
-    result = compare_query_stats(before, after)
+    ctx = _FakeContext()
+    ctx.state["baseline"] = {
+        "total_bytes_processed": 1000,
+        "measurement_method": "dry_run",
+    }
+    ctx.state["optimized_measurement"] = {
+        "total_bytes_processed": 400,
+        "measurement_method": "live",
+    }
+    result = compare_query_stats(ctx)
     assert result["bytes_saved"] == 600
     assert result["savings_pct"] == 60.0
     assert result["measurement_method"] == "mixed"
+    assert ctx.state["compare"]["bytes_saved"] == 600
 
 
 class _FakeContext:
@@ -150,7 +164,7 @@ def test_measure_query_cost_reuses_discovery_cache() -> None:
         "job_id": "cached",
     }
     with patch("app.tools.measure_cost._run_query") as mock_run:
-        result = measure_query_cost(sql, "baseline", ctx)
+        result = measure_query_cost("baseline", ctx, sql)
     mock_run.assert_not_called()
     assert result["measurement_method"] == "dry_run"
     assert result["total_bytes_processed"] == 50
@@ -162,7 +176,7 @@ def test_measure_query_cost_live_only_when_clustered() -> None:
     ctx.state["has_clustering"] = True
     job = _fake_job(bytes_processed=200)
     with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
-        result = measure_query_cost("SELECT 1", "baseline", ctx)
+        result = measure_query_cost("baseline", ctx, "SELECT 1")
     mock_run.assert_called_once_with("SELECT 1", dry_run=False)
     assert result["measurement_method"] == "live"
     assert result["total_bytes_processed"] == 200
@@ -172,7 +186,7 @@ def test_measure_query_cost_optimized_final_is_live_only() -> None:
     ctx = _FakeContext()
     job = _fake_job(bytes_processed=80)
     with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
-        result = measure_query_cost("SELECT 2", "optimized_final", ctx)
+        result = measure_query_cost("optimized_final", ctx, "SELECT 2")
     mock_run.assert_called_once_with("SELECT 2", dry_run=False)
     assert result["measurement_method"] == "live"
     assert ctx.state["optimized_verified_live"] is True
@@ -184,8 +198,8 @@ def test_measure_query_cost_dry_run_error_does_not_live() -> None:
         "app.tools.measure_cost._run_query",
         side_effect=RuntimeError("invalid SQL"),
     ) as mock_run:
-        result = measure_query_cost("SELEKT", "baseline", ctx)
-    mock_run.assert_called_once_with("SELEKT", dry_run=True)
+        result = measure_query_cost("baseline", ctx, "SELECT 1 FROM nope")
+    mock_run.assert_called_once_with("SELECT 1 FROM nope", dry_run=True)
     assert result["status"] == "error"
     assert ctx.state["baseline_measured"] is False
 
@@ -199,7 +213,7 @@ def test_measure_query_cost_live_fallback_when_bytes_missing() -> None:
         return dry_job if dry_run else live_job
 
     with patch("app.tools.measure_cost._run_query", side_effect=_side_effect) as mock_run:
-        result = measure_query_cost("SELECT 1", "optimized_probe", ctx)
+        result = measure_query_cost("optimized_probe", ctx, "SELECT 1")
     assert mock_run.call_count == 2
     assert result["measurement_method"] == "mixed"
     assert result["total_bytes_processed"] == 40
@@ -211,7 +225,7 @@ def test_measure_query_cost_baseline_requires_table_metadata() -> None:
         {"project": "proj", "dataset": "ds", "table": "tbl"},
     ]
     with patch("app.tools.measure_cost._run_query") as mock_run:
-        result = measure_query_cost("SELECT 1 FROM `proj.ds.tbl`", "baseline", ctx)
+        result = measure_query_cost("baseline", ctx, "SELECT 1 FROM `proj.ds.tbl`")
     mock_run.assert_not_called()
     assert result["status"] == "error"
     assert "get_table_metadata" in result["error_message"]
@@ -230,7 +244,7 @@ def test_measure_query_cost_baseline_live_after_clustered_metadata() -> None:
     ctx.state["has_clustering"] = True
     job = _fake_job(bytes_processed=200)
     with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
-        result = measure_query_cost("SELECT 1 FROM `proj.ds.tbl`", "baseline", ctx)
+        result = measure_query_cost("baseline", ctx, "SELECT 1 FROM `proj.ds.tbl`")
     mock_run.assert_called_once_with("SELECT 1 FROM `proj.ds.tbl`", dry_run=False)
     assert result["measurement_method"] == "live"
     assert result["total_bytes_processed"] == 200
@@ -257,6 +271,7 @@ def test_get_table_metadata_sets_has_clustering() -> None:
 
 
 def test_get_partition_summary_queries_dataset_information_schema() -> None:
+    ctx = _FakeContext()
     row = SimpleNamespace(
         partition_count=52,
         min_partition_id="20240101",
@@ -269,12 +284,20 @@ def test_get_partition_summary_queries_dataset_information_schema() -> None:
     client = MagicMock()
     client.query.return_value = job
     with patch("app.tools.metadata.get_bq_client", return_value=client):
-        result = get_partition_summary("gc-pr-dl-001", "dtl_bl_refined", "TB_CARTOES_HIST_DIA")
+        result = get_partition_summary(
+            "gc-pr-dl-001", "dtl_bl_refined", "TB_CARTOES_HIST_DIA", ctx
+        )
     assert result["status"] == "success"
     assert result["partition_count"] == 52
     sql = client.query.call_args.args[0]
     assert "dtl_bl_refined.INFORMATION_SCHEMA.PARTITIONS" in sql
     assert "region-" not in sql
+    assert (
+        ctx.state["partition_summaries"][
+            "gc-pr-dl-001.dtl_bl_refined.TB_CARTOES_HIST_DIA"
+        ]["partition_count"]
+        == 52
+    )
 
 
 def test_get_table_metadata_without_clustering_sets_flag_false() -> None:
