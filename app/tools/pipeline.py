@@ -57,8 +57,10 @@ def _compute_validation(ctx: Context) -> dict[str, Any]:
     if not isinstance(llm, dict):
         llm = {}
 
-    schema_passed = isinstance(schema_raw, dict) and schema_raw.get("passed") is True
-    compare_ok = isinstance(compare_raw, dict) and compare_raw.get("status") == "success"
+    schema_passed = isinstance(
+        schema_raw, dict) and schema_raw.get("passed") is True
+    compare_ok = isinstance(compare_raw, dict) and compare_raw.get(
+        "status") == "success"
     baseline = ctx.state.get("baseline") or {}
     optimized = ctx.state.get("optimized_measurement") or {}
     measurements_ok = (

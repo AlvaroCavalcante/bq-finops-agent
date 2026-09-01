@@ -30,20 +30,20 @@ from app.tools.pipeline import (
     seed_pipeline_context,
 )
 
-MODEL = "gemini-3.6-flash"
+DEFAULT_MODEL = "gemini-3.6-flash"
 _INCLUDE_CONTENTS = "default"
 
 
-def _model() -> Gemini:
+def _model(model_name: str = DEFAULT_MODEL) -> Gemini:
     return Gemini(
-        model=MODEL,
+        model=model_name,
         retry_options=types.HttpRetryOptions(attempts=3),
     )
 
 
 input_agent = Agent(
     name="input_agent",
-    model=_model(),
+    model=_model("gemini-3.5-flash-lite"),
     instruction=load_prompt("input"),
     description="Extracts SQL and optional context from the user message.",
     output_schema=PipelineInput,
@@ -74,7 +74,7 @@ metadata_agent = Agent(
 
 optimizer_agent = Agent(
     name="optimizer_agent",
-    model=_model(),
+    model=_model("gemini-3.1-pro-preview"),
     instruction=load_prompt("optimizer"),
     description="Rewrites BigQuery SQL to reduce bytes processed and query costs.",
     output_schema=OptimizerStep,
