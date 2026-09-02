@@ -12,8 +12,8 @@ from app.tools.safety import is_readonly_select
 
 MAX_OPTIMIZATION_ITERATIONS = 3
 MIN_IMPROVEMENT_PCT = 5.0
-CONTINUE_ROUTE = "continue"
-EXIT_ROUTE = "exit"
+OPTIMIZE_ROUTE = "optimize"
+DEFAULT_ROUTE = "__DEFAULT__"
 
 LOOP_FIX_CORRECTNESS = "fix_correctness"
 LOOP_RETRY_NO_SAVINGS = "retry_no_savings"
@@ -320,6 +320,6 @@ def decide_optimization_loop(ctx: Context) -> Event:
 
     return Event(
         output=validation,
-        route=EXIT_ROUTE if should_exit else CONTINUE_ROUTE,
+        route=OPTIMIZE_ROUTE if not should_exit else DEFAULT_ROUTE,
         state=state,
     )

@@ -30,8 +30,8 @@ from app.schemas import (
     ValidationStep,
 )
 from app.tools.pipeline import (
-    CONTINUE_ROUTE,
-    EXIT_ROUTE,
+    DEFAULT_ROUTE,
+    OPTIMIZE_ROUTE,
     decide_optimization_loop,
     seed_pipeline_context,
 )
@@ -73,12 +73,12 @@ def test_root_agent_is_finops_workflow() -> None:
     assert (
         "decide_optimization_loop",
         "optimizer_agent",
-        CONTINUE_ROUTE,
+        OPTIMIZE_ROUTE,
     ) in routed
     assert (
         "decide_optimization_loop",
         "formatter_agent",
-        EXIT_ROUTE,
+        DEFAULT_ROUTE,
     ) in routed
 
 

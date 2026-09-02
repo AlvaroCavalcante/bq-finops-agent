@@ -24,8 +24,8 @@ from app.tools.metadata import (
     get_view_definition,
 )
 from app.tools.pipeline import (
-    CONTINUE_ROUTE,
-    EXIT_ROUTE,
+    DEFAULT_ROUTE,
+    OPTIMIZE_ROUTE,
     decide_optimization_loop,
     seed_pipeline_context,
 )
@@ -122,8 +122,8 @@ root_agent = Workflow(
         (
             decide_optimization_loop,
             {
-                CONTINUE_ROUTE: optimizer_agent,
-                EXIT_ROUTE: formatter_agent,
+                OPTIMIZE_ROUTE: optimizer_agent,
+                DEFAULT_ROUTE: formatter_agent,
             },
         ),
     ],

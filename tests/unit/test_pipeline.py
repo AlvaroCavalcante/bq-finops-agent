@@ -19,8 +19,7 @@ from pydantic import ValidationError
 
 from app.schemas import PipelineInput
 from app.tools.pipeline import (
-    CONTINUE_ROUTE,
-    EXIT_ROUTE,
+    DEFAULT_ROUTE,
     LOOP_FIX_CORRECTNESS,
     LOOP_MAX_ITERATIONS,
     LOOP_PLATEAU,
@@ -28,6 +27,7 @@ from app.tools.pipeline import (
     LOOP_SQUEEZE_MORE,
     MAX_OPTIMIZATION_ITERATIONS,
     MIN_IMPROVEMENT_PCT,
+    OPTIMIZE_ROUTE,
     decide_optimization_loop,
     seed_pipeline_context,
 )
@@ -135,7 +135,7 @@ def test_seed_pipeline_context_rejects_free_text() -> None:
 def test_first_pass_improvement_continues_to_squeeze() -> None:
     event = decide_optimization_loop(_ctx(**_passing_validation_state()))
     delta = event.actions.state_delta
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert delta["optimization_iteration"] == 1
     assert delta["validation"]["passed"] is True
     assert delta["validation"]["loop_reason"] == LOOP_SQUEEZE_MORE
@@ -168,7 +168,7 @@ def test_first_pass_no_savings_retries() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert delta["validation"]["loop_reason"] == LOOP_RETRY_NO_SAVINGS
     assert delta["validation"]["passed"] is True
     assert delta["validation"]["marginal_savings_pct"] == 0.0
@@ -198,7 +198,7 @@ def test_first_pass_worse_bytes_retries() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert delta["validation"]["loop_reason"] == LOOP_RETRY_NO_SAVINGS
     assert delta["validation"]["marginal_savings_pct"] == -50.0
     assert "best_sql" not in delta
@@ -206,7 +206,7 @@ def test_first_pass_worse_bytes_retries() -> None:
 
 def test_continues_when_checks_fail_and_retries_remain() -> None:
     event = decide_optimization_loop(_ctx())
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert event.output["passed"] is False
     assert event.output["retry_hint"]
     assert event.output["loop_reason"] == LOOP_FIX_CORRECTNESS
@@ -221,7 +221,7 @@ def test_exits_at_max_iterations_even_if_checks_fail() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == EXIT_ROUTE
+    assert event.actions.route == DEFAULT_ROUTE
     assert delta["optimization_iteration"] == MAX_OPTIMIZATION_ITERATIONS
     assert delta["validation"]["loop_reason"] == LOOP_MAX_ITERATIONS
     assert delta["optimizer_step"]["optimized_sql"] == ORIGINAL_SQL
@@ -232,7 +232,7 @@ def test_llm_passed_flag_is_not_trusted() -> None:
     event = decide_optimization_loop(
         _ctx(validation={"passed": True, "retry_hint": None})
     )
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert event.output["passed"] is False
     assert event.output["loop_reason"] == LOOP_FIX_CORRECTNESS
 
@@ -260,7 +260,7 @@ def test_second_pass_below_threshold_exits_plateau_and_restores_best() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == EXIT_ROUTE
+    assert event.actions.route == DEFAULT_ROUTE
     assert delta["validation"]["loop_reason"] == LOOP_PLATEAU
     assert delta["validation"]["marginal_savings_pct"] == 2.5
     assert "best_sql" not in delta
@@ -292,7 +292,7 @@ def test_second_pass_above_threshold_continues_and_updates_best() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert delta["validation"]["loop_reason"] == LOOP_SQUEEZE_MORE
     assert delta["validation"]["marginal_savings_pct"] == 25.0
     assert delta["best_sql"] == SQUEEZE_SQL
@@ -316,7 +316,7 @@ def test_second_pass_schema_failure_keeps_best_and_retries() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == CONTINUE_ROUTE
+    assert event.actions.route == OPTIMIZE_ROUTE
     assert delta["validation"]["passed"] is False
     assert delta["validation"]["loop_reason"] == LOOP_FIX_CORRECTNESS
     assert "best_sql" not in delta
@@ -346,7 +346,7 @@ def test_max_iterations_worse_squeeze_restores_best() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == EXIT_ROUTE
+    assert event.actions.route == DEFAULT_ROUTE
     assert delta["validation"]["loop_reason"] == LOOP_MAX_ITERATIONS
     assert delta["validation"]["passed"] is True
     assert delta["validation"]["marginal_savings_pct"] == -25.0
@@ -379,7 +379,7 @@ def test_max_iterations_accepts_final_improvement() -> None:
         )
     )
     delta = event.actions.state_delta
-    assert event.actions.route == EXIT_ROUTE
+    assert event.actions.route == DEFAULT_ROUTE
     assert delta["validation"]["loop_reason"] == LOOP_MAX_ITERATIONS
     assert delta["best_sql"] == SQUEEZE_SQL
     assert delta["best_bytes"] == 30
