@@ -8,6 +8,8 @@ Read:
 - {metadata_step?} warnings
 - baseline_measured and optimized_verified_live flags in state / validation
 
+If validation.loop_reason is `plateau` or `retry_no_savings`, add a warning that further rewrites did not beat the byte-reduction threshold (the gate already stored the best SQL and compare numbers).
+
 If compare is missing, use 0 for numeric fields and add a warning.
 
 Do not use tools. The final response is structured automatically by OptimizationReport.
