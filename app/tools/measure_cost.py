@@ -65,22 +65,6 @@ def _execute(sql: str, dry_run: bool) -> dict:
         return _as_measurement({"status": "error", "error_message": str(exc)})
 
 
-def _store_measurement(
-    purpose: str,
-    final: dict,
-    methods_used: list[str],
-    tool_context: ToolContext,
-) -> None:
-    if purpose == "baseline":
-        tool_context.state["baseline"] = final
-        tool_context.state["baseline_measured"] = final.get("status") == "success"
-
-    if purpose in ("optimized_probe", "optimized_final"):
-        tool_context.state["optimized_measurement"] = final
-        if "live" in methods_used and final.get("status") == "success":
-            tool_context.state["optimized_verified_live"] = True
-
-
 def _table_ref(table: dict) -> str:
     return f"{table.get('project')}.{table.get('dataset')}.{table.get('table')}"
 
@@ -121,10 +105,7 @@ def _cached_dry_run(sql: str, tool_context: ToolContext) -> dict | None:
     return None
 
 
-def list_referenced_tables(
-    sql: str,
-    tool_context: ToolContext | None = None,
-) -> dict:
+def list_referenced_tables(sql: str) -> dict:
     """Discover tables referenced by a SQL query via BigQuery dry-run.
 
     Never executes the query. On failure, does not invent table names.
@@ -139,15 +120,7 @@ def list_referenced_tables(
         return _as_measurement(
             {"status": "error", "error_message": "No SQL provided."}
         )
-    result = _execute(sql, dry_run=True)
-    if result.get("status") != "success":
-        return result
-
-    if tool_context is not None:
-        tool_context.state["referenced_tables"] = result.get("referenced_tables") or []
-        tool_context.state["discovery_dry_run"] = result
-        tool_context.state["discovery_sql"] = sql
-    return result
+    return _execute(sql, dry_run=True)
 
 
 def measure_query_cost(
@@ -174,17 +147,13 @@ def measure_query_cost(
         dict with bytes, measurement_method, schema, and referenced tables.
     """
     if not sql:
-        final = _as_measurement(
+        return _as_measurement(
             {"status": "error", "error_message": "No SQL provided."}
         )
-        _store_measurement(purpose, final, [], tool_context)
-        return final
 
     ok, err = is_readonly_select(sql)
     if not ok:
-        final = _as_measurement({"status": "error", "error_message": err})
-        _store_measurement(purpose, final, [], tool_context)
-        return final
+        return _as_measurement({"status": "error", "error_message": err})
 
     if purpose == "baseline":
         blocked = _baseline_blocked_without_metadata(tool_context)
@@ -193,14 +162,11 @@ def measure_query_cost(
 
     has_clustering = bool(tool_context.state.get("has_clustering"))
     use_live = purpose == "optimized_final" or has_clustering
-    methods_used: list[str] = []
 
     if use_live:
         final = _execute(sql, dry_run=False)
         if final.get("status") == "success":
-            methods_used.append("live")
             final["measurement_method"] = "live"
-        _store_measurement(purpose, final, methods_used, tool_context)
         return final
 
     dry_result = _cached_dry_run(sql, tool_context)
@@ -208,15 +174,12 @@ def measure_query_cost(
         dry_result = _execute(sql, dry_run=True)
 
     if dry_result.get("status") != "success":
-        _store_measurement(purpose, dry_result, methods_used, tool_context)
         return dry_result
-
-    methods_used.append("dry_run")
 
     if dry_result.get("total_bytes_processed") is None:
         live_result = _execute(sql, dry_run=False)
         if live_result.get("status") != "success":
-            final = _as_measurement(
+            return _as_measurement(
                 {
                     "status": "error",
                     "error_message": live_result.get(
@@ -224,17 +187,10 @@ def measure_query_cost(
                     ),
                 }
             )
-            _store_measurement(purpose, final, methods_used, tool_context)
-            return final
-        methods_used.append("live")
         final = dict(live_result)
         final["measurement_method"] = "mixed"
         final["dry_run_bytes"] = None
-        final = _as_measurement(final)
-        _store_measurement(purpose, final, methods_used, tool_context)
-        return final
+        return _as_measurement(final)
 
     dry_result["measurement_method"] = "dry_run"
-    dry_result = _as_measurement(dry_result)
-    _store_measurement(purpose, dry_result, methods_used, tool_context)
-    return dry_result
+    return _as_measurement(dry_result)

@@ -1,4 +1,3 @@
-from google.adk.tools import ToolContext
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 
@@ -58,33 +57,10 @@ def _serialize_key_constraints(tbl) -> tuple[list[str], list[dict]]:
     return primary_key_columns, foreign_keys
 
 
-def _record_keyed(tool_context: ToolContext | None, state_key: str, ref: str, value: dict) -> None:
-    if tool_context is None:
-        return
-    items = dict(tool_context.state.get(state_key) or {})
-    items[ref] = value
-    tool_context.state[state_key] = items
-
-
-def _record_table_metadata(result: dict, tool_context: ToolContext | None) -> None:
-    if tool_context is None or result.get("status") != "success":
-        return
-    ref = f"{result['project']}.{result['dataset']}.{result['table']}"
-    tables = dict(tool_context.state.get("tables_metadata") or {})
-    tables[ref] = result
-    tool_context.state["tables_metadata"] = tables
-    tool_context.state["has_clustering"] = any(
-        bool(meta.get("clustering_fields"))
-        for meta in tables.values()
-        if meta.get("status") == "success"
-    )
-
-
 def get_table_metadata(
     project: str,
     dataset: str,
     table: str,
-    tool_context: ToolContext | None = None,
 ) -> dict:
     """Fetch BigQuery table metadata for optimization decisions.
 
@@ -155,7 +131,6 @@ def get_table_metadata(
             "schema": schema,
         },
     )
-    _record_table_metadata(result, tool_context)
     return result
 
 
@@ -163,7 +138,6 @@ def get_partition_summary(
     project: str,
     dataset: str,
     table: str,
-    tool_context: ToolContext | None = None,
 ) -> dict:
     """Summarize partition ranges for a partitioned table.
 
@@ -195,19 +169,15 @@ def get_partition_summary(
     try:
         rows = list(client.query(query, job_config=job_config).result())
     except Exception as exc:  # noqa: BLE001
-        result = dump_model(
+        return dump_model(
             PartitionSummary, {"status": "error", "error_message": str(exc)}
         )
-        _record_keyed(tool_context, "partition_summaries", f"{project}.{dataset}.{table}", result)
-        return result
 
     if not rows:
-        result = dump_model(PartitionSummary, {"status": "success", "partition_count": 0})
-        _record_keyed(tool_context, "partition_summaries", f"{project}.{dataset}.{table}", result)
-        return result
+        return dump_model(PartitionSummary, {"status": "success", "partition_count": 0})
 
     row = rows[0]
-    result = dump_model(
+    return dump_model(
         PartitionSummary,
         {
             "status": "success",
@@ -218,15 +188,12 @@ def get_partition_summary(
             "total_logical_bytes": row.total_logical_bytes,
         },
     )
-    _record_keyed(tool_context, "partition_summaries", f"{project}.{dataset}.{table}", result)
-    return result
 
 
 def get_view_definition(
     project: str,
     dataset: str,
     view: str,
-    tool_context: ToolContext | None = None,
 ) -> dict:
     """Return the SQL definition of a BigQuery view.
 
@@ -243,24 +210,20 @@ def get_view_definition(
     try:
         tbl = client.get_table(ref)
     except NotFound:
-        result = dump_model(
+        return dump_model(
             ViewDefinition, {"status": "error", "error_message": f"View not found: {ref}"}
         )
-        _record_keyed(tool_context, "view_definitions", ref, result)
-        return result
 
     if tbl.table_type != "VIEW":
-        result = dump_model(
+        return dump_model(
             ViewDefinition,
             {
                 "status": "error",
                 "error_message": f"{ref} is not a view (type={tbl.table_type}).",
             },
         )
-        _record_keyed(tool_context, "view_definitions", ref, result)
-        return result
 
-    result = dump_model(
+    return dump_model(
         ViewDefinition,
         {
             "status": "success",
@@ -270,5 +233,3 @@ def get_view_definition(
             "view_query": tbl.view_query,
         },
     )
-    _record_keyed(tool_context, "view_definitions", ref, result)
-    return result

@@ -157,7 +157,7 @@ def detect_antipatterns(sql: str, metadata_map: dict) -> dict:
 
 def detect_sql_antipatterns(
     sql: str,
-    tool_context: ToolContext | None = None,
+    tool_context: ToolContext,
 ) -> dict:
     """Detect BigQuery SQL anti-patterns using table metadata from session state.
 
@@ -177,11 +177,5 @@ def detect_sql_antipatterns(
             },
         )
 
-    metadata_map: dict = {}
-    if tool_context is not None:
-        metadata_map = dict(tool_context.state.get("tables_metadata") or {})
-
-    result = detect_antipatterns(sql, metadata_map)
-    if tool_context is not None:
-        tool_context.state["antipatterns"] = result.get("findings") or []
-    return result
+    metadata_map = dict(tool_context.state.get("tables_metadata") or {})
+    return detect_antipatterns(sql, metadata_map)

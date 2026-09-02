@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import difflib
 
-from google.adk.tools import ToolContext
-
 from app.schemas import CompareResult, SchemaCheck, dump_model
 from app.tools.bq_client import get_usd_per_tib
 
@@ -83,7 +81,6 @@ def _compare_measurements(before: dict, after: dict) -> dict:
 def validate_output_schema(
     original_schema: list,
     optimized_schema: list,
-    tool_context: ToolContext | None = None,
 ) -> dict:
     """Verify optimized query preserves final output column names and types.
 
@@ -96,13 +93,10 @@ def validate_output_schema(
     Returns:
         dict with passed flag and any mismatches.
     """
-    result = dump_model(
+    return dump_model(
         SchemaCheck,
         _compare_column_schemas(original_schema or [], optimized_schema or []),
     )
-    if tool_context is not None:
-        tool_context.state["schema_check"] = result
-    return result
 
 
 def compare_query_stats(
@@ -110,7 +104,6 @@ def compare_query_stats(
     optimized_bytes: int,
     baseline_method: str = "dry_run",
     optimized_method: str = "dry_run",
-    tool_context: ToolContext | None = None,
 ) -> dict:
     """Compare bytes processed and estimate on-demand savings.
 
@@ -123,7 +116,7 @@ def compare_query_stats(
     Returns:
         dict with bytes delta, savings percentage, and USD estimates.
     """
-    result = dump_model(
+    return dump_model(
         CompareResult,
         _compare_measurements(
             {
@@ -136,9 +129,6 @@ def compare_query_stats(
             },
         ),
     )
-    if tool_context is not None:
-        tool_context.state["compare"] = result
-    return result
 
 
 def diff_sql(before: str, after: str) -> dict:

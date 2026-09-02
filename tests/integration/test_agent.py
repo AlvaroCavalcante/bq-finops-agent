@@ -112,4 +112,13 @@ def test_metadata_agent_includes_discovery_tool() -> None:
     ]
     assert "list_referenced_tables" in names
     assert "measure_query_cost" in names
+    assert "detect_sql_antipatterns" not in names
+
+
+def test_optimizer_agent_includes_antipatterns_tool() -> None:
+    names = [
+        getattr(tool, "name", None) or getattr(tool, "__name__", "")
+        for tool in optimizer_agent.tools
+    ]
     assert "detect_sql_antipatterns" in names
+    assert "diff_sql" in names

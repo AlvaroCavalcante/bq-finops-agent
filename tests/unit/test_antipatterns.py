@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
+from app.callbacks import after_tool_callback
 from app.tools.antipatterns import detect_antipatterns, detect_sql_antipatterns
 
 
@@ -126,6 +129,12 @@ def test_detect_sql_antipatterns_reads_tables_metadata_from_state() -> None:
         }
     }
     result = detect_sql_antipatterns("SELECT id FROM t", tool_context=ctx)
+    after_tool_callback(
+        tool=SimpleNamespace(name="detect_sql_antipatterns"),
+        args={"sql": "SELECT id FROM t"},
+        tool_context=ctx,
+        tool_response=result,
+    )
     patterns = {f["pattern"] for f in result["findings"]}
     assert "missing_partition_filter" in patterns
     assert ctx.state["antipatterns"]

@@ -6,7 +6,7 @@ from google.adk.models import Gemini
 from google.adk.workflow import Workflow
 from google.genai import types
 
-from app.callbacks import before_tool_callback
+from app.callbacks import after_tool_callback, before_tool_callback
 from app.prompts import load_prompt
 from app.schemas import (
     MetadataStep,
@@ -56,7 +56,7 @@ metadata_agent = Agent(
     model=_model(),
     instruction=load_prompt("metadata"),
     description=(
-        "Collects table metadata, SQL anti-patterns, and baseline query bytes."
+        "Collects table metadata and baseline query bytes."
     ),
     output_schema=MetadataStep,
     tools=[
@@ -64,10 +64,10 @@ metadata_agent = Agent(
         get_table_metadata,
         get_partition_summary,
         get_view_definition,
-        detect_sql_antipatterns,
         measure_query_cost,
     ],
     before_tool_callback=before_tool_callback,
+    after_tool_callback=after_tool_callback,
     include_contents=_INCLUDE_CONTENTS,
     output_key="metadata_step",
 )
@@ -78,7 +78,9 @@ optimizer_agent = Agent(
     instruction=load_prompt("optimizer"),
     description="Rewrites BigQuery SQL to reduce bytes processed and query costs.",
     output_schema=OptimizerStep,
-    tools=[diff_sql],
+    tools=[detect_sql_antipatterns, diff_sql],
+    before_tool_callback=before_tool_callback,
+    after_tool_callback=after_tool_callback,
     include_contents=_INCLUDE_CONTENTS,
     output_key="optimizer_step",
 )
@@ -91,6 +93,7 @@ validator_agent = Agent(
     output_schema=ValidationStep,
     tools=[measure_query_cost, validate_output_schema, compare_query_stats],
     before_tool_callback=before_tool_callback,
+    after_tool_callback=after_tool_callback,
     include_contents=_INCLUDE_CONTENTS,
     output_key="validation",
 )

@@ -150,10 +150,6 @@ class MetadataStep(BaseModel):
         default_factory=list,
         description="Fully-qualified table refs collected via tools.",
     )
-    antipattern_patterns: list[str] = Field(
-        default_factory=list,
-        description="Anti-pattern names returned by detect_sql_antipatterns.",
-    )
     baseline_measured: bool = Field(
         default=False,
         description="Whether measure_query_cost(purpose=baseline) succeeded.",

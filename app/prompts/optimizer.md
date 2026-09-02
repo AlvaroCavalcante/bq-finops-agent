@@ -17,6 +17,8 @@ baseline measurement:
 Previous validation (empty on first pass; use retry_hint on retries):
 {validation?}
 
+On the first pass (Previous validation empty / no retry_hint), call `detect_sql_antipatterns` with `sql` equal to original_sql before rewriting. Do not pass a metadata JSON blob; table metadata is already in session state. Analyze original_sql, never a draft rewrite. On retries, skip the tool and use the antipatterns already injected above.
+
 MANDATORY rules (Google BigQuery best practices):
 - Project only columns needed in each CTE; remove unused columns.
 - Push filters before JOINs and aggregations; reduce data early.
