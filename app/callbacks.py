@@ -1,28 +1,11 @@
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
-from app.tools.safety import is_readonly_select
-
 
 def _tool_name(tool: BaseTool | None) -> str:
     if tool is None:
         return ""
     return getattr(tool, "name", None) or getattr(tool, "__name__", "") or ""
-
-
-def before_tool_callback(
-    tool: BaseTool,
-    args: dict,
-    tool_context: ToolContext,
-) -> dict | None:
-    """Block non-readonly SQL before any BigQuery tool runs."""
-    sql_keys = ("sql", "query", "before", "after")
-    for key in sql_keys:
-        if key in args and isinstance(args[key], str):
-            ok, err = is_readonly_select(args[key])
-            if not ok:
-                return {"status": "error", "error_message": err}
-    return None
 
 
 def _record_keyed(

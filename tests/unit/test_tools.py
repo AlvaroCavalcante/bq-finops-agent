@@ -15,7 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.callbacks import after_tool_callback, before_tool_callback
+from app.callbacks import after_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
 from app.tools.measure_cost import list_referenced_tables, measure_query_cost
 from app.tools.metadata import get_partition_summary, get_table_metadata
@@ -51,33 +51,25 @@ def test_readonly_select_rejects_delete() -> None:
     assert err is not None
 
 
-def test_before_tool_callback_allows_select() -> None:
-    result = before_tool_callback(
-        tool=None,
-        args={"sql": "SELECT 1", "purpose": "baseline"},
-        tool_context=None,
-    )
-    assert result is None
-
-
-def test_before_tool_callback_blocks_dml() -> None:
-    result = before_tool_callback(
-        tool=None,
-        args={"sql": "DELETE FROM dataset.table WHERE id = 1", "purpose": "baseline"},
-        tool_context=None,
-    )
-    assert result is not None
+def test_list_referenced_tables_blocks_dml() -> None:
+    with patch("app.tools.measure_cost._run_query") as mock_run:
+        result = list_referenced_tables("DELETE FROM dataset.table WHERE id = 1")
+    mock_run.assert_not_called()
     assert result["status"] == "error"
     assert "error_message" in result
 
 
-def test_before_tool_callback_skips_tools_without_sql_args() -> None:
-    result = before_tool_callback(
-        tool=None,
-        args={"project": "p", "dataset": "d", "table": "t"},
-        tool_context=None,
-    )
-    assert result is None
+def test_measure_query_cost_blocks_dml() -> None:
+    ctx = _FakeContext()
+    with patch("app.tools.measure_cost._run_query") as mock_run:
+        result = measure_query_cost(
+            "DELETE FROM dataset.table WHERE id = 1",
+            "baseline",
+            ctx,
+        )
+    mock_run.assert_not_called()
+    assert result["status"] == "error"
+    assert "error_message" in result
 
 
 def test_validate_output_schema_passes_matching_columns() -> None:
@@ -175,9 +167,9 @@ def test_list_referenced_tables_error_does_not_invent_tables() -> None:
     ):
         result = _persist(
             "list_referenced_tables",
-            {"sql": "SELEKT"},
+            {"sql": "SELECT 1 FROM nope"},
             ctx,
-            list_referenced_tables("SELEKT"),
+            list_referenced_tables("SELECT 1 FROM nope"),
         )
     assert result["status"] == "error"
     assert "referenced_tables" not in ctx.state

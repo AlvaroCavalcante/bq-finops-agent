@@ -57,6 +57,9 @@ def _as_measurement(data: dict) -> dict:
 
 
 def _execute(sql: str, dry_run: bool) -> dict:
+    ok, err = is_readonly_select(sql)
+    if not ok:
+        return _as_measurement({"status": "error", "error_message": err})
     method = "dry_run" if dry_run else "live"
     try:
         job = _run_query(sql, dry_run=dry_run)
@@ -150,10 +153,6 @@ def measure_query_cost(
         return _as_measurement(
             {"status": "error", "error_message": "No SQL provided."}
         )
-
-    ok, err = is_readonly_select(sql)
-    if not ok:
-        return _as_measurement({"status": "error", "error_message": err})
 
     if purpose == "baseline":
         blocked = _baseline_blocked_without_metadata(tool_context)
