@@ -5,7 +5,7 @@ One-shot BigQuery SQL optimizer built with the [Agent Development Kit (ADK)](htt
 ## Features
 
 - **Pipeline architecture**: input (SQL + context) → metadata (discover tables + enrich + original-query bytes) → optimize (anti-patterns + rewrite) / validate loop → structured report
-- **Cost measurement**: live when tables are clustered or purpose is `optimized_final`; otherwise dry-run (reuses discovery cache for the same SQL)
+- **Cost measurement**: dry-run by default (reuses discovery cache for the same SQL); live only when tables are clustered or dry-run cannot estimate bytes
 - **Table discovery**: BigQuery dry-run via `list_referenced_tables` — not LLM inference of FROM clauses
 - **Safety**: blocks DML/DDL; `maximum_bytes_billed` cap on live runs
 - **Deterministic checks**: SQL anti-patterns, output schema validation, readonly guardrails
@@ -48,7 +48,7 @@ START → input_agent → seed_pipeline_context → metadata_agent → optimizer
 ### Tools
 
 - `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables`
-- `measure_query_cost(sql, purpose)` — baseline / optimized_probe / optimized_final; reads clustering and discovery cache from session state
+- `measure_query_cost(sql, purpose)` — baseline or optimized; live vs dry-run comes from clustering / missing dry-run bytes, not from purpose
 - `get_table_metadata`, `get_partition_summary`, `get_view_definition` — table/view facts (persisted by callback)
 - `detect_sql_antipatterns(sql)` — optimizer tool; reads `tables_metadata` from state
 - `validate_output_schema(original_schema, optimized_schema)` — schema check (persisted by callback)
@@ -62,7 +62,7 @@ Structured `OptimizationReport` JSON:
 - `optimized_sql`, `baseline_bytes`, `optimized_bytes`, `savings_pct`
 - `estimated_usd_*`, `measurement_method`, `changes_applied`
 - `recommendations_not_applied`, `warnings`
-- `baseline_measured`, `optimized_verified_live`
+- `baseline_measured`, `optimized_verified_live` (informational: true only when live/mixed was required)
 
 ## Evaluation
 

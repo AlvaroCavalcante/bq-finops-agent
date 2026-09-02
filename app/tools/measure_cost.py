@@ -9,7 +9,7 @@ from app.schemas import QueryMeasurement, dump_model
 from app.tools.bq_client import get_bq_client, get_max_bytes_billed
 from app.tools.safety import is_readonly_select
 
-Purpose = Literal["baseline", "optimized_probe", "optimized_final"]
+Purpose = Literal["baseline", "optimized"]
 
 
 def _schema_fields(job: bigquery.QueryJob) -> list[dict]:
@@ -128,14 +128,15 @@ def list_referenced_tables(sql: str) -> dict:
 
 def measure_query_cost(
     sql: str,
-    purpose: str,
+    purpose: Purpose,
     tool_context: ToolContext,
 ) -> dict:
     """Measure BigQuery bytes processed for a SQL query.
 
-    Chooses live vs dry-run up front from purpose and session clustering
-    state. Does not look up table metadata. Reuses a discovery dry-run
-    cache when measuring the same SQL on the dry-run path.
+    Chooses live vs dry-run from session clustering state. Does not look
+    up table metadata. Reuses a discovery dry-run cache when measuring
+    the same SQL on the dry-run path. Falls back to live only when
+    clustering is present or dry-run cannot estimate bytes.
 
     For purpose=baseline, refuses to run until get_table_metadata has
     recorded every referenced table (so clustering is known). Queries
@@ -143,8 +144,8 @@ def measure_query_cost(
 
     Args:
         sql: BigQuery SQL to measure. Pass original_sql for baseline, or
-            optimizer_step.optimized_sql for optimized_probe / optimized_final.
-        purpose: One of baseline, optimized_probe, or optimized_final.
+            optimizer_step.optimized_sql for purpose=optimized.
+        purpose: One of baseline or optimized.
 
     Returns:
         dict with bytes, measurement_method, schema, and referenced tables.
@@ -160,7 +161,7 @@ def measure_query_cost(
             return blocked
 
     has_clustering = bool(tool_context.state.get("has_clustering"))
-    use_live = purpose == "optimized_final" or has_clustering
+    use_live = has_clustering
 
     if use_live:
         final = _execute(sql, dry_run=False)

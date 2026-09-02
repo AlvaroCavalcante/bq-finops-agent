@@ -188,7 +188,14 @@ class ValidationStep(BaseModel):
         description="What the optimizer should fix if validation failed.",
     )
     baseline_measured: bool = False
-    optimized_verified_live: bool = False
+    optimized_verified_live: bool = Field(
+        default=False,
+        description=(
+            "True when the optimized measurement used live or mixed "
+            "(dry-run could not estimate bytes). Informational; "
+            "not a validation gate."
+        ),
+    )
 
 
 class OptimizationReport(BaseModel):
@@ -216,5 +223,9 @@ class OptimizationReport(BaseModel):
     baseline_measured: bool = Field(
         description="Whether baseline was measured.")
     optimized_verified_live: bool = Field(
-        description="Whether optimized query ran live at least once."
+        description=(
+            "Whether the optimized measurement used live or mixed. "
+            "Informational; dry-run is sufficient when clustering is absent "
+            "and dry-run returns bytes."
+        ),
     )

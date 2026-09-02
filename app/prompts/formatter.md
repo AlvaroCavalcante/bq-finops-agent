@@ -6,7 +6,7 @@ Read:
 - {optimizer_step?} for optimized_sql, changes_applied, recommendations_not_applied
 - {validation?} and {compare?} for bytes, USD, measurement_method, warnings
 - {metadata_step?} warnings
-- baseline_measured and optimized_verified_live flags in state / validation
+- baseline_measured and optimized_verified_live flags in state / validation (`optimized_verified_live` is informational; copy it, do not require it to be true)
 
 If validation.loop_reason is `plateau` or `retry_no_savings`, add a warning that further rewrites did not beat the byte-reduction threshold (the gate already stored the best SQL and compare numbers).
 

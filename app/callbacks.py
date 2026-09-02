@@ -41,7 +41,7 @@ def _store_measurement(
         tool_context.state["baseline_measured"] = final.get(
             "status") == "success"
         return
-    if purpose in ("optimized_probe", "optimized_final"):
+    if purpose == "optimized":
         tool_context.state["optimized_measurement"] = final
         method = final.get("measurement_method")
         if final.get("status") == "success" and method in ("live", "mixed"):

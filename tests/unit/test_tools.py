@@ -213,15 +213,33 @@ def test_measure_query_cost_live_only_when_clustered() -> None:
     assert result["total_bytes_processed"] == 200
 
 
-def test_measure_query_cost_optimized_final_is_live_only() -> None:
+def test_measure_query_cost_optimized_uses_dry_run_without_clustering() -> None:
     ctx = _FakeContext()
     job = _fake_job(bytes_processed=80)
     with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
         result = _persist(
             "measure_query_cost",
-            {"sql": "SELECT 2", "purpose": "optimized_final"},
+            {"sql": "SELECT 2", "purpose": "optimized"},
             ctx,
-            measure_query_cost("SELECT 2", "optimized_final", ctx),
+            measure_query_cost("SELECT 2", "optimized", ctx),
+        )
+    mock_run.assert_called_once_with("SELECT 2", dry_run=True)
+    assert result["measurement_method"] == "dry_run"
+    assert result["total_bytes_processed"] == 80
+    assert ctx.state.get("optimized_verified_live") is not True
+    assert ctx.state["optimized_measurement"]["measurement_method"] == "dry_run"
+
+
+def test_measure_query_cost_optimized_live_when_clustered() -> None:
+    ctx = _FakeContext()
+    ctx.state["has_clustering"] = True
+    job = _fake_job(bytes_processed=80)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = _persist(
+            "measure_query_cost",
+            {"sql": "SELECT 2", "purpose": "optimized"},
+            ctx,
+            measure_query_cost("SELECT 2", "optimized", ctx),
         )
     mock_run.assert_called_once_with("SELECT 2", dry_run=False)
     assert result["measurement_method"] == "live"
@@ -256,9 +274,9 @@ def test_measure_query_cost_live_fallback_when_bytes_missing() -> None:
     with patch("app.tools.measure_cost._run_query", side_effect=_side_effect) as mock_run:
         result = _persist(
             "measure_query_cost",
-            {"sql": "SELECT 1", "purpose": "optimized_probe"},
+            {"sql": "SELECT 1", "purpose": "optimized"},
             ctx,
-            measure_query_cost("SELECT 1", "optimized_probe", ctx),
+            measure_query_cost("SELECT 1", "optimized", ctx),
         )
     assert mock_run.call_count == 2
     assert result["measurement_method"] == "mixed"
