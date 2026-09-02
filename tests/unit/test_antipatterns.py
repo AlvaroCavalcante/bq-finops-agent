@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from app.tools.antipatterns import _detect_sql_antipatterns, detect_sql_antipatterns
+from app.tools.antipatterns import detect_antipatterns, detect_sql_antipatterns
 
 
 class _FakeContext:
@@ -21,7 +21,7 @@ class _FakeContext:
 
 
 def test_detect_select_star() -> None:
-    result = _detect_sql_antipatterns("SELECT * FROM t", {})
+    result = detect_antipatterns("SELECT * FROM t", {})
     patterns = {f["pattern"] for f in result["findings"]}
     assert "select_star" in patterns
 
@@ -51,7 +51,7 @@ def test_detect_key_constraints_available_on_join() -> None:
         "SELECT o.order_id FROM orders o "
         "JOIN customers c ON o.customer_id = c.id"
     )
-    result = _detect_sql_antipatterns(sql, meta)
+    result = detect_antipatterns(sql, meta)
     patterns = {f["pattern"] for f in result["findings"]}
     assert "key_constraints_available" in patterns
 
@@ -66,7 +66,7 @@ def test_key_constraints_not_flagged_without_join() -> None:
             "foreign_keys": [],
         }
     }
-    result = _detect_sql_antipatterns("SELECT order_id FROM orders", meta)
+    result = detect_antipatterns("SELECT order_id FROM orders", meta)
     patterns = {f["pattern"] for f in result["findings"]}
     assert "key_constraints_available" not in patterns
 
@@ -81,7 +81,7 @@ def test_missing_status_still_detects_partition_filter() -> None:
             "time_partitioning": {"field": "DATA_VISAO", "type": "DAY"},
         }
     }
-    result = _detect_sql_antipatterns(sql, meta)
+    result = detect_antipatterns(sql, meta)
     patterns = {f["pattern"] for f in result["findings"]}
     assert "missing_partition_filter" in patterns
 
@@ -101,7 +101,7 @@ def test_full_table_metadata_detects_missing_partition_filter() -> None:
             },
         }
     }
-    result = _detect_sql_antipatterns(sql, meta)
+    result = detect_antipatterns(sql, meta)
     patterns = {f["pattern"] for f in result["findings"]}
     assert "missing_partition_filter" in patterns
 
@@ -109,7 +109,7 @@ def test_full_table_metadata_detects_missing_partition_filter() -> None:
 def test_unpartitioned_table_without_status_is_not_flagged() -> None:
     sql = "SELECT id FROM t"
     meta = {"p.d.t": {"dataset": "d", "table": "t", "clustering_fields": []}}
-    result = _detect_sql_antipatterns(sql, meta)
+    result = detect_antipatterns(sql, meta)
     patterns = {f["pattern"] for f in result["findings"]}
     assert "missing_partition_filter" not in patterns
 

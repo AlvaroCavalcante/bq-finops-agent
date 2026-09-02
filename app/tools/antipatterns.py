@@ -11,7 +11,7 @@ from app.schemas import AntipatternResult, dump_model
 _WILDCARD_TABLE = re.compile(r"`[^`]+\.\*`|\b\w+\.\*`", re.IGNORECASE)
 
 
-def _detect_sql_antipatterns(sql: str, metadata_map: dict) -> dict:
+def detect_antipatterns(sql: str, metadata_map: dict) -> dict:
     """Detect BigQuery SQL anti-patterns from SQL and a metadata map."""
     findings: list[dict] = []
 
@@ -62,8 +62,6 @@ def _detect_sql_antipatterns(sql: str, metadata_map: dict) -> dict:
             }
         )
         return dump_model(AntipatternResult, {"status": "success", "findings": findings})
-
-    has_join = bool(re.search(r"\bJOIN\b", sql, re.IGNORECASE))
 
     for table_meta in metadata_map.values():
         if not isinstance(table_meta, dict):
@@ -119,6 +117,8 @@ def _detect_sql_antipatterns(sql: str, metadata_map: dict) -> dict:
 
         pk_cols = table_meta.get("primary_key_columns") or []
         fks = table_meta.get("foreign_keys") or []
+        has_join = bool(re.search(r"\bJOIN\b", sql, re.IGNORECASE))
+
         if has_join and (pk_cols or fks):
             findings.append(
                 {
@@ -181,7 +181,7 @@ def detect_sql_antipatterns(
     if tool_context is not None:
         metadata_map = dict(tool_context.state.get("tables_metadata") or {})
 
-    result = _detect_sql_antipatterns(sql, metadata_map)
+    result = detect_antipatterns(sql, metadata_map)
     if tool_context is not None:
         tool_context.state["antipatterns"] = result.get("findings") or []
     return result
