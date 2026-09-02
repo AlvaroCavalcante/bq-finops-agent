@@ -74,7 +74,7 @@ metadata_agent = Agent(
 
 optimizer_agent = Agent(
     name="optimizer_agent",
-    model=_model("gemini-3.1-pro-preview"),
+    model=_model(), # gemini-3.1-pro-preview
     instruction=load_prompt("optimizer"),
     description="Rewrites BigQuery SQL to reduce bytes processed and query costs.",
     output_schema=OptimizerStep,
@@ -100,7 +100,7 @@ validator_agent = Agent(
 
 formatter_agent = Agent(
     name="formatter_agent",
-    model=_model(),
+    model=_model("gemini-3.5-flash-lite"),
     instruction=load_prompt("formatter"),
     description="Formats the final optimization report.",
     output_schema=OptimizationReport,

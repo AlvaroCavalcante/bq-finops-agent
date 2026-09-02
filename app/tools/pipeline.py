@@ -248,7 +248,8 @@ def decide_optimization_loop(ctx: Context) -> Event:
         validation["retry_hint"] = None
     elif passed:
         validation["retry_hint"] = _continue_retry_hint(
-            loop_reason, marginal_savings_pct, _as_dict(validation.get("compare"))
+            loop_reason, marginal_savings_pct, _as_dict(
+                validation.get("compare"))
         )
 
     if loop_reason == LOOP_PLATEAU:
