@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 import difflib
+from typing import Any
 
-from app.schemas import CompareResult, SchemaCheck, dump_model
+from pydantic import BaseModel
+
+from app.schemas import ColumnField, CompareResult, SchemaCheck, dump_model
 from app.tools.bq_client import get_usd_per_tib
+
+
+def _as_column(item: Any) -> dict | None:
+    if isinstance(item, dict):
+        return item
+    if isinstance(item, BaseModel):
+        return item.model_dump()
+    return None
 
 
 def _compare_column_schemas(original: list, optimized: list) -> dict:
@@ -14,17 +25,23 @@ def _compare_column_schemas(original: list, optimized: list) -> dict:
         )
 
     for i, (o, n) in enumerate(zip(original, optimized, strict=False)):
-        if not isinstance(o, dict):
-            o = {}
-        if not isinstance(n, dict):
-            n = {}
-        if o.get("name") != n.get("name"):
+        original_col = _as_column(o)
+        optimized_col = _as_column(n)
+        if original_col is None or optimized_col is None:
             mismatches.append(
-                f"Column {i}: name '{o.get('name')}' vs '{n.get('name')}'."
+                f"Column {i}: expected {{name, type}} objects, "
+                f"got {type(o).__name__} vs {type(n).__name__}."
             )
-        if o.get("type") != n.get("type"):
+            continue
+        if original_col.get("name") != optimized_col.get("name"):
             mismatches.append(
-                f"Column {i}: type '{o.get('type')}' vs '{n.get('type')}'."
+                f"Column {i}: name '{original_col.get('name')}' vs "
+                f"'{optimized_col.get('name')}'."
+            )
+        if original_col.get("type") != optimized_col.get("type"):
+            mismatches.append(
+                f"Column {i}: type '{original_col.get('type')}' vs "
+                f"'{optimized_col.get('type')}'."
             )
 
     return {
@@ -79,16 +96,18 @@ def _compare_measurements(before: dict, after: dict) -> dict:
 
 
 def validate_output_schema(
-    original_schema: list,
-    optimized_schema: list,
+    original_schema: list[ColumnField],
+    optimized_schema: list[ColumnField],
 ) -> dict:
-    """Verify optimized query preserves final output column names and types.
+    """Verify the optimized query preserves original output column names and types.
 
     Args:
-        original_schema: Column list from baseline.output_schema
-            (each item: name, type, optional mode).
-        optimized_schema: Column list from the optimized measurement
-            output_schema, same shape as original_schema.
+        original_schema: Copy baseline.output_schema. Each item is a column
+            object with name, type, and optional mode. Never pass integers,
+            column indices, or a length/shape array.
+        optimized_schema: Copy output_schema from the measure_query_cost
+            result for the rewritten SQL (same item shape as original_schema).
+            optimizer_step has no schema; do not use best_measurement.
 
     Returns:
         dict with passed flag and any mismatches.

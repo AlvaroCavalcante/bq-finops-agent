@@ -92,6 +92,28 @@ def test_validate_output_schema_fails_on_rename() -> None:
         [{"name": "b", "type": "INT64"}],
     )
     assert result["passed"] is False
+    assert "name 'a' vs 'b'" in result["mismatches"][0]
+
+
+def test_validate_output_schema_rejects_index_arrays() -> None:
+    result = validate_output_schema(list(range(12)), list(range(13)))
+    assert result["passed"] is False
+    assert any("expected {name, type} objects" in m for m in result["mismatches"])
+
+
+def test_validate_output_schema_declaration_uses_column_objects() -> None:
+    from google.adk.tools.function_tool import FunctionTool
+
+    decl = FunctionTool(validate_output_schema)._get_declaration()
+    props = decl.parameters_json_schema["properties"]
+    defs = decl.parameters_json_schema.get("$defs", {})
+    for key in ("original_schema", "optimized_schema"):
+        items = props[key]["items"]
+        ref = items.get("$ref", "")
+        assert props[key]["type"] == "array"
+        assert "ColumnField" in ref
+    assert defs["ColumnField"]["properties"]["name"]["type"] == "string"
+    assert defs["ColumnField"]["properties"]["type"]["type"] == "string"
 
 
 def test_compare_query_stats_savings() -> None:

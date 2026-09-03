@@ -20,9 +20,12 @@ class PipelineInput(BaseModel):
 
 
 class ColumnField(BaseModel):
-    name: str
-    type: str
-    mode: str | None = None
+    name: str = Field(description="Output column name.")
+    type: str = Field(description="BigQuery type, e.g. STRING, INT64, TIMESTAMP.")
+    mode: str | None = Field(
+        default=None,
+        description="NULLABLE, REQUIRED, or REPEATED.",
+    )
 
 
 class TableRef(BaseModel):
