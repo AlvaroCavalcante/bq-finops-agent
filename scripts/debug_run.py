@@ -27,7 +27,6 @@ load_dotenv(ROOT / ".env")
 logging.basicConfig(level=logging.DEBUG)
 
 from app.agent import (  # noqa: E402
-    formatter_agent,
     input_agent,
     metadata_agent,
     optimizer_agent,
@@ -41,7 +40,6 @@ AGENTS = {
     "metadata": metadata_agent,
     "optimizer": optimizer_agent,
     "validator": validator_agent,
-    "formatter": formatter_agent,
 }
 
 PROMPT = """

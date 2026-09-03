@@ -40,7 +40,7 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 
 ```
 START → input_agent → seed_pipeline_context → metadata_agent → optimizer_agent
-      → validator_agent → decide_optimization_loop → formatter_agent
+      → validator_agent → decide_optimization_loop → render_report
 ```
 
 `app/agent.py` holds the workflow. `input_agent` emits `PipelineInput`; seed copies `sql`/`context` to session state. Each later agent has an `output_schema` + `output_key`. Tools take explicit arguments (the agent copies `{original_sql?}` into `sql`) and return dicts. `after_tool_callback` projects those returns into session state so later prompts and tools can read them without the model rebuilding JSON.
@@ -57,7 +57,9 @@ START → input_agent → seed_pipeline_context → metadata_agent → optimizer
 
 ## Output
 
-Structured `OptimizationReport` JSON:
+`render_report` is a deterministic node (no model call): it builds the report from
+session state, emits a Markdown report for the chat UI, and the structured
+`OptimizationReport` JSON as the workflow output:
 
 - `optimized_sql`, `baseline_bytes`, `optimized_bytes`, `savings_pct`
 - `estimated_usd_*`, `measurement_method`, `changes_applied`

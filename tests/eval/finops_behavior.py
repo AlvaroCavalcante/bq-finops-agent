@@ -1,6 +1,5 @@
 """Deterministic eval checks for BQ FinOps agent tool usage and safety."""
 
-import json
 import re
 
 

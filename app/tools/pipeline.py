@@ -6,9 +6,11 @@ from typing import Any
 
 from google.adk.agents.context import Context
 from google.adk.events.event import Event
+from google.adk.events.event_actions import EventActions
 
 from app.schemas import PipelineInput
 from app.tools.safety import is_readonly_select
+from app.tools.utils import as_dict, as_int, as_str_list
 
 MAX_OPTIMIZATION_ITERATIONS = 3
 MIN_IMPROVEMENT_PCT = 5.0
@@ -48,18 +50,10 @@ def seed_pipeline_context(node_input: Any) -> Event:
     }
     if not ok:
         state["input_error"] = err
-    return Event(output=parsed.model_dump(mode="json"), state=state)
-
-
-def _as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    return dict(value) if isinstance(value, dict) else {}
+    return Event(
+        output=parsed.model_dump(mode="json"),
+        actions=EventActions(state_delta=state),
+    )
 
 
 def _marginal_savings_pct(previous_bytes: int, current_bytes: int) -> float:
@@ -71,17 +65,17 @@ def _marginal_savings_pct(previous_bytes: int, current_bytes: int) -> float:
 
 
 def _current_bytes(ctx: Context) -> int:
-    optimized = _as_dict(ctx.state.get("optimized_measurement"))
+    optimized = as_dict(ctx.state.get("optimized_measurement"))
     if optimized.get("total_bytes_processed") is not None:
-        return _as_int(optimized.get("total_bytes_processed"))
-    return _as_int(_as_dict(ctx.state.get("compare")).get("optimized_bytes"))
+        return as_int(optimized.get("total_bytes_processed"))
+    return as_int(as_dict(ctx.state.get("compare")).get("optimized_bytes"))
 
 
 def _previous_bytes(ctx: Context) -> int:
     if ctx.state.get("best_bytes") is not None:
-        return _as_int(ctx.state.get("best_bytes"))
-    return _as_int(
-        _as_dict(ctx.state.get("baseline")).get("total_bytes_processed")
+        return as_int(ctx.state.get("best_bytes"))
+    return as_int(
+        as_dict(ctx.state.get("baseline")).get("total_bytes_processed")
     )
 
 
@@ -106,10 +100,10 @@ def _compute_validation(ctx: Context) -> dict[str, Any]:
     )
     passed = schema_passed and compare_ok and measurements_ok
 
-    warnings: list[str] = []
-    if isinstance(compare_raw, dict):
-        warnings.extend(str(w) for w in (compare_raw.get("warnings") or []))
-    warnings.extend(str(w) for w in (llm.get("warnings") or []))
+    warnings = [
+        *as_str_list(as_dict(compare_raw).get("warnings")),
+        *as_str_list(llm.get("warnings")),
+    ]
 
     retry_hint = llm.get("retry_hint")
     if not passed and not retry_hint:
@@ -173,11 +167,11 @@ def _original_report_state(
     ctx: Context, validation: dict[str, Any]
 ) -> dict[str, Any]:
     original = str(ctx.state.get("original_sql") or "")
-    baseline = _as_dict(ctx.state.get("baseline"))
-    compare = _as_dict(validation.get("compare"))
-    bytes_ = _as_int(
+    baseline = as_dict(ctx.state.get("baseline"))
+    compare = as_dict(validation.get("compare"))
+    bytes_ = as_int(
         baseline.get("total_bytes_processed"),
-        _as_int(compare.get("baseline_bytes")),
+        as_int(compare.get("baseline_bytes")),
     )
     usd = float(compare.get("estimated_usd_before") or 0.0)
     method = (
@@ -248,7 +242,7 @@ def decide_optimization_loop(ctx: Context) -> Event:
         validation["retry_hint"] = None
     elif passed:
         validation["retry_hint"] = _continue_retry_hint(
-            loop_reason, marginal_savings_pct, _as_dict(
+            loop_reason, marginal_savings_pct, as_dict(
                 validation.get("compare"))
         )
 
@@ -265,9 +259,9 @@ def decide_optimization_loop(ctx: Context) -> Event:
             "Stopped at the maximum number of optimization iterations.",
         ]
 
-    optimizer_step = _as_dict(ctx.state.get("optimizer_step"))
-    compare = _as_dict(ctx.state.get("compare"))
-    measurement = _as_dict(ctx.state.get("optimized_measurement"))
+    optimizer_step = as_dict(ctx.state.get("optimizer_step"))
+    compare = as_dict(ctx.state.get("compare"))
+    measurement = as_dict(ctx.state.get("optimized_measurement"))
     optimized_sql = str(
         optimizer_step.get("optimized_sql")
         or ctx.state.get("original_sql")
@@ -320,6 +314,8 @@ def decide_optimization_loop(ctx: Context) -> Event:
 
     return Event(
         output=validation,
-        route=OPTIMIZE_ROUTE if not should_exit else DEFAULT_ROUTE,
-        state=state,
+        actions=EventActions(
+            route=OPTIMIZE_ROUTE if not should_exit else DEFAULT_ROUTE,
+            state_delta=state,
+        ),
     )

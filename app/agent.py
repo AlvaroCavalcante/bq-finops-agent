@@ -29,6 +29,7 @@ from app.tools.pipeline import (
     decide_optimization_loop,
     seed_pipeline_context,
 )
+from app.tools.report import render_report
 
 DEFAULT_MODEL = "gemini-3.6-flash"
 _INCLUDE_CONTENTS = "default"
@@ -95,16 +96,6 @@ validator_agent = Agent(
     output_key="validation",
 )
 
-formatter_agent = Agent(
-    name="formatter_agent",
-    model=_model("gemini-3.5-flash-lite"),
-    instruction=load_prompt("formatter"),
-    description="Formats the final optimization report.",
-    output_schema=OptimizationReport,
-    output_key="optimization_report",
-    include_contents=_INCLUDE_CONTENTS,
-)
-
 root_agent = Workflow(
     name="bq_finops_agent",
     description=(
@@ -123,7 +114,7 @@ root_agent = Workflow(
             decide_optimization_loop,
             {
                 OPTIMIZE_ROUTE: optimizer_agent,
-                DEFAULT_ROUTE: formatter_agent,
+                DEFAULT_ROUTE: render_report,
             },
         ),
     ],
@@ -136,10 +127,10 @@ app = App(
 
 __all__ = [
     "app",
-    "root_agent",
     "input_agent",
     "metadata_agent",
     "optimizer_agent",
+    "render_report",
+    "root_agent",
     "validator_agent",
-    "formatter_agent",
 ]

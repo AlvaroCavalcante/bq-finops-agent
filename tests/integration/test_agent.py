@@ -15,7 +15,6 @@
 from google.adk.workflow import Workflow
 
 from app.agent import (
-    formatter_agent,
     input_agent,
     metadata_agent,
     optimizer_agent,
@@ -35,6 +34,7 @@ from app.tools.pipeline import (
     decide_optimization_loop,
     seed_pipeline_context,
 )
+from app.tools.report import render_report
 
 
 def test_root_agent_is_finops_workflow() -> None:
@@ -53,7 +53,7 @@ def test_root_agent_is_finops_workflow() -> None:
         "optimizer_agent",
         "validator_agent",
         "decide_optimization_loop",
-        "formatter_agent",
+        "render_report",
     }
 
     routed = {
@@ -77,7 +77,7 @@ def test_root_agent_is_finops_workflow() -> None:
     ) in routed
     assert (
         "decide_optimization_loop",
-        "formatter_agent",
+        "render_report",
         DEFAULT_ROUTE,
     ) in routed
 
@@ -89,7 +89,7 @@ def test_workflow_nodes_are_pipeline_agents() -> None:
     assert nodes["metadata_agent"].name == metadata_agent.name
     assert nodes["optimizer_agent"].name == optimizer_agent.name
     assert nodes["validator_agent"].name == validator_agent.name
-    assert nodes["formatter_agent"].name == formatter_agent.name
+    assert nodes["render_report"].name == render_report.__name__
     assert nodes["decide_optimization_loop"].name == decide_optimization_loop.__name__
 
 
@@ -99,7 +99,6 @@ def test_agents_expose_output_schemas() -> None:
     assert metadata_agent.output_schema is MetadataStep
     assert optimizer_agent.output_schema is OptimizerStep
     assert validator_agent.output_schema is ValidationStep
-    assert formatter_agent.output_schema is OptimizationReport
     assert metadata_agent.output_key == "metadata_step"
     assert optimizer_agent.output_key == "optimizer_step"
     assert validator_agent.output_key == "validation"
