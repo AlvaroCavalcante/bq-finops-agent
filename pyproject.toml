@@ -1,9 +1,9 @@
 [project]
 name = "bq-finops-agent"
 version = "0.1.0"
-description = ""
+description = "One-shot BigQuery SQL optimizer agent built with ADK"
 authors = [
-    {name = "Your Name", email = "your@email.com"},
+    {name = "Alvaro Leandro Cavalcante Carneiro", email = "leandro0807@live.com"},
 ]
 
 dependencies = [
@@ -15,6 +15,8 @@ dependencies = [
     "google-cloud-logging>=3.12.0,<4.0.0",
     "google-cloud-bigquery>=3.25.0,<4.0.0",
     "sqlglot>=26.0.0,<27.0.0",
+    "google-cloud-aiplatform[agent-engines,evaluation]>=1.156.0",
+    "protobuf>=6.31.1,<7.0.0",
 ]
 requires-python = ">=3.11,<3.14"
 
@@ -56,7 +58,7 @@ select = [
 ignore = ["E501", "C901", "B006"] # ignore line too long, too complex
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "frontend"]
+known-first-party = ["app"]
 
 [tool.ty]
 # ty is Astral's Rust-based type checker (same team as ruff/uv)
@@ -81,7 +83,7 @@ deprecated = "ignore"
 
 [tool.codespell]
 ignore-words-list = "rouge"
-skip = "./locust_env/*,uv.lock,.venv,./frontend,**/package-lock.json"
+skip = "./locust_env/*,uv.lock,.venv,**/package-lock.json"
 
 
 [build-system]
@@ -94,6 +96,6 @@ pythonpath = "."
 asyncio_default_fixture_loop_scope = "session"
 
 [tool.hatch.build.targets.wheel]
-packages = ["app","frontend"]
+packages = ["app"]
 
 

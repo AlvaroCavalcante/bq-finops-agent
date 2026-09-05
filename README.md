@@ -32,7 +32,9 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `GOOGLE_CLOUD_PROJECT` | GCP project for BigQuery | required |
-| `BQ_LOCATION` | BigQuery job location | `US` |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Use Vertex AI (not AI Studio) | `true` |
+| `GOOGLE_CLOUD_LOCATION` | Gemini/Vertex region (`global`; do not use the BQ region) | `global` |
+| `BQ_LOCATION` | BigQuery job location | `us-east4` |
 | `BQ_MAX_BYTES_BILLED` | Cap for live query runs (bytes) | 50 GiB |
 | `BQ_ON_DEMAND_USD_PER_TIB` | On-demand price for USD estimates | 6.25 |
 
@@ -76,6 +78,26 @@ Unit tests (deterministic tools):
 
 ```bash
 uv run pytest tests/unit tests/integration -q
+```
+
+## Deploy (Agent Runtime)
+
+Requires `agents-cli` (`uv tool install google-agents-cli`). The local `.env` is not copied into the container; pass the same values at deploy time:
+
+```bash
+agents-cli deploy \
+  --project gcd-pr-dados \
+  --region us-east1 \
+  --update-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,BQ_LOCATION=us-east4" \
+  --no-confirm-project
+```
+
+`us-east1` is the Agent Runtime region. `GOOGLE_CLOUD_LOCATION=global` is for Gemini. `BQ_LOCATION=us-east4` is for BigQuery jobs.
+
+After deploy:
+
+```bash
+agents-cli run --url URL_DO_ENGINE --mode adk "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT 5"
 ```
 
 ## Usage by engineering

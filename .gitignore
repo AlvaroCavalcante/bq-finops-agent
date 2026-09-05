@@ -189,6 +189,7 @@ Thumbs.db
 
 # ADK
 .adk/
+.ruff_cache/
 
 # Agent CLI specific
 .persist_vector_store
@@ -199,6 +200,7 @@ my_env.tfvars
 .saved_chats
 .env
 .google-agents-cli/
+deployment_metadata.json
 
 # A2A Inspector
 tools/a2a-inspector/

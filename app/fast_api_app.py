@@ -10,8 +10,14 @@ from google.adk.runners import Runner
 
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
+from app.app_utils.reasoning_engine_adapter import (
+    attach_reasoning_engine_routes,
+)
 
 load_dotenv()
+otel_to_cloud = os.environ.get(
+    "GOOGLE_CLOUD_AGENT_ENGINE_ENABLE_TELEMETRY", ""
+).lower() in ("true", "1")
 allow_origins = (
     os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
 )
@@ -48,11 +54,15 @@ app: FastAPI = get_fast_api_app(
     artifact_service_uri=services.ARTIFACT_SERVICE_URI,
     allow_origins=allow_origins,
     session_service_uri=services.SESSION_SERVICE_URI,
-    otel_to_cloud=True,
+    otel_to_cloud=otel_to_cloud,
     lifespan=lifespan,
 )
 app.title = "bq-finops-agent"
 app.description = "API for interacting with the Agent bq-finops-agent"
+
+# Proxy routes so the Vertex AI Console Playground (reasoning_engine SDK) can
+# talk to this agent alongside the native adk_api routes.
+attach_reasoning_engine_routes(app)
 
 
 # Main execution
