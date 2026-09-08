@@ -8,6 +8,7 @@ from google.genai import types
 
 from app.callbacks import after_tool_callback
 from app.prompts import load_prompt
+from app.quiet_ui import QuietUiPlugin
 from app.schemas import (
     MetadataStep,
     OptimizationReport,
@@ -74,7 +75,7 @@ metadata_agent = Agent(
 
 optimizer_agent = Agent(
     name="optimizer_agent",
-    model=_model(), # gemini-3.1-pro-preview
+    model=_model(),  # gemini-3.1-pro-preview
     instruction=load_prompt("optimizer"),
     description="Rewrites BigQuery SQL to reduce bytes processed and query costs.",
     output_schema=OptimizerStep,
@@ -123,6 +124,7 @@ root_agent = Workflow(
 app = App(
     root_agent=root_agent,
     name="app",
+    plugins=[QuietUiPlugin()],
 )
 
 __all__ = [

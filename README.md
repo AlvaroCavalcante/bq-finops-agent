@@ -37,6 +37,7 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 | `BQ_LOCATION` | BigQuery job location | `us-east4` |
 | `BQ_MAX_BYTES_BILLED` | Cap for live query runs (bytes) | 50 GiB |
 | `BQ_ON_DEMAND_USD_PER_TIB` | On-demand price for USD estimates | 6.25 |
+| `FINOPS_DEBUG` | Stream full tool/agent traces in the playground | `false` |
 
 ## Architecture
 
