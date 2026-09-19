@@ -202,6 +202,18 @@ class ValidationStep(BaseModel):
 
 
 class OptimizationReport(BaseModel):
+    status: Literal["success", "error"] = Field(
+        default="success",
+        description="Whether optimization completed or the pipeline aborted.",
+    )
+    error_code: str | None = Field(
+        default=None,
+        description="Machine-readable abort code when status is error.",
+    )
+    error_message: str | None = Field(
+        default=None,
+        description="Human-readable abort reason when status is error.",
+    )
     optimized_sql: str = Field(description="The optimized BigQuery SQL.")
     baseline_bytes: int = Field(
         description="Bytes processed by the original query.")

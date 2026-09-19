@@ -29,8 +29,10 @@ from app.schemas import (
     ValidationStep,
 )
 from app.tools.pipeline import (
+    ABORT_ROUTE,
     DEFAULT_ROUTE,
     OPTIMIZE_ROUTE,
+    decide_metadata_gate,
     decide_optimization_loop,
     seed_pipeline_context,
 )
@@ -50,6 +52,7 @@ def test_root_agent_is_finops_workflow() -> None:
         "input_agent",
         "seed_pipeline_context",
         "metadata_agent",
+        "decide_metadata_gate",
         "optimizer_agent",
         "validator_agent",
         "decide_optimization_loop",
@@ -62,8 +65,27 @@ def test_root_agent_is_finops_workflow() -> None:
     }
     assert ("__START__", "input_agent", None) in routed
     assert ("input_agent", "seed_pipeline_context", None) in routed
-    assert ("seed_pipeline_context", "metadata_agent", None) in routed
-    assert ("metadata_agent", "optimizer_agent", None) in routed
+    assert (
+        "seed_pipeline_context",
+        "render_report",
+        ABORT_ROUTE,
+    ) in routed
+    assert (
+        "seed_pipeline_context",
+        "metadata_agent",
+        DEFAULT_ROUTE,
+    ) in routed
+    assert ("metadata_agent", "decide_metadata_gate", None) in routed
+    assert (
+        "decide_metadata_gate",
+        "render_report",
+        ABORT_ROUTE,
+    ) in routed
+    assert (
+        "decide_metadata_gate",
+        "optimizer_agent",
+        DEFAULT_ROUTE,
+    ) in routed
     assert ("optimizer_agent", "validator_agent", None) in routed
     assert (
         "validator_agent",
@@ -91,6 +113,7 @@ def test_workflow_nodes_are_pipeline_agents() -> None:
     assert nodes["validator_agent"].name == validator_agent.name
     assert nodes["render_report"].name == render_report.__name__
     assert nodes["decide_optimization_loop"].name == decide_optimization_loop.__name__
+    assert nodes["decide_metadata_gate"].name == decide_metadata_gate.__name__
 
 
 def test_agents_expose_output_schemas() -> None:

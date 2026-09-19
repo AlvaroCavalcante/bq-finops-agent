@@ -9,13 +9,16 @@ from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
 
 from app.schemas import PipelineInput
-from app.tools.safety import is_readonly_select
+from app.tools.safety import classify_sql_guard
 from app.tools.utils import as_dict, as_int, as_str_list
 
 MAX_OPTIMIZATION_ITERATIONS = 3
 MIN_IMPROVEMENT_PCT = 5.0
 OPTIMIZE_ROUTE = "optimize"
+ABORT_ROUTE = "abort"
 DEFAULT_ROUTE = "__DEFAULT__"
+BASELINE_FAILED = "BASELINE_FAILED"
+_BASELINE_MISSING_MESSAGE = "Baseline measurement was not completed."
 
 LOOP_FIX_CORRECTNESS = "fix_correctness"
 LOOP_RETRY_NO_SAVINGS = "retry_no_savings"
@@ -35,7 +38,7 @@ def _as_pipeline_input(node_input: Any) -> PipelineInput:
 def seed_pipeline_context(node_input: Any) -> Event:
     """Copy PipelineInput onto session state for later nodes and tools."""
     parsed = _as_pipeline_input(node_input)
-    ok, err = is_readonly_select(parsed.sql)
+    classified = classify_sql_guard(parsed.sql)
     state: dict[str, Any] = {
         "original_sql": parsed.sql,
         "user_context": parsed.context,
@@ -48,11 +51,43 @@ def seed_pipeline_context(node_input: Any) -> Event:
         "validation": {},
         "optimizer_step": {},
     }
-    if not ok:
-        state["input_error"] = err
+    if classified is not None:
+        state["pipeline_error"] = {
+            "error_code": classified[0],
+            "message": classified[1],
+        }
     return Event(
         output=parsed.model_dump(mode="json"),
-        actions=EventActions(state_delta=state),
+        actions=EventActions(
+            route=ABORT_ROUTE if classified is not None else DEFAULT_ROUTE,
+            state_delta=state,
+        ),
+    )
+
+
+def decide_metadata_gate(ctx: Context) -> Event:
+    """Abort when the original query could not be measured."""
+    baseline = as_dict(ctx.state.get("baseline"))
+    if baseline.get("status") == "success":
+        return Event(
+            output=ctx.state.get("metadata_step"),
+            actions=EventActions(route=DEFAULT_ROUTE),
+        )
+
+    message = str(baseline.get("error_message") or "").strip()
+    if not message:
+        message = _BASELINE_MISSING_MESSAGE
+    return Event(
+        output=ctx.state.get("metadata_step"),
+        actions=EventActions(
+            route=ABORT_ROUTE,
+            state_delta={
+                "pipeline_error": {
+                    "error_code": BASELINE_FAILED,
+                    "message": message,
+                }
+            },
+        ),
     )
 
 

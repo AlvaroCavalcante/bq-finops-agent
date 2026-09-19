@@ -19,7 +19,7 @@ from app.callbacks import after_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
 from app.tools.measure_cost import list_referenced_tables, measure_query_cost
 from app.tools.metadata import get_partition_summary, get_table_metadata
-from app.tools.safety import is_readonly_select
+from app.tools.safety import classify_sql_guard, is_readonly_select
 
 
 class _FakeContext:
@@ -49,6 +49,16 @@ def test_readonly_select_rejects_delete() -> None:
     ok, err = is_readonly_select(sql)
     assert ok is False
     assert err is not None
+    assert classify_sql_guard(sql) == (
+        "FORBIDDEN_SQL",
+        "Only SELECT / WITH … SELECT queries are allowed.",
+    )
+
+
+def test_classify_sql_guard_rejects_empty_and_non_select() -> None:
+    assert classify_sql_guard("  ;") == ("EMPTY_SQL", "Empty SQL statement.")
+    assert classify_sql_guard("EXPLAIN SELECT 1")[0] == "INVALID_SQL"
+    assert classify_sql_guard("SELECT 1") is None
 
 
 def test_list_referenced_tables_blocks_dml() -> None:

@@ -24,8 +24,10 @@ from app.tools.metadata import (
     get_view_definition,
 )
 from app.tools.pipeline import (
+    ABORT_ROUTE,
     DEFAULT_ROUTE,
     OPTIMIZE_ROUTE,
+    decide_metadata_gate,
     decide_optimization_loop,
     seed_pipeline_context,
 )
@@ -106,8 +108,21 @@ root_agent = Workflow(
     edges=[
         ("START", input_agent),
         (input_agent, seed_pipeline_context),
-        (seed_pipeline_context, metadata_agent),
-        (metadata_agent, optimizer_agent),
+        (
+            seed_pipeline_context,
+            {
+                ABORT_ROUTE: render_report,
+                DEFAULT_ROUTE: metadata_agent,
+            },
+        ),
+        (metadata_agent, decide_metadata_gate),
+        (
+            decide_metadata_gate,
+            {
+                ABORT_ROUTE: render_report,
+                DEFAULT_ROUTE: optimizer_agent,
+            },
+        ),
         (optimizer_agent, validator_agent),
         (validator_agent, decide_optimization_loop),
         (

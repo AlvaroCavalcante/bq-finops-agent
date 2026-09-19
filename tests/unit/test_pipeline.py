@@ -19,6 +19,8 @@ from pydantic import ValidationError
 
 from app.schemas import PipelineInput
 from app.tools.pipeline import (
+    ABORT_ROUTE,
+    BASELINE_FAILED,
     DEFAULT_ROUTE,
     LOOP_FIX_CORRECTNESS,
     LOOP_MAX_ITERATIONS,
@@ -28,6 +30,7 @@ from app.tools.pipeline import (
     MAX_OPTIMIZATION_ITERATIONS,
     MIN_IMPROVEMENT_PCT,
     OPTIMIZE_ROUTE,
+    decide_metadata_gate,
     decide_optimization_loop,
     seed_pipeline_context,
 )
@@ -105,7 +108,8 @@ def test_seed_pipeline_context_from_model() -> None:
     assert event.output["sql"] == "SELECT 1"
     assert event.actions.state_delta["original_sql"] == "SELECT 1"
     assert event.actions.state_delta["user_context"] == "nightly"
-    assert "input_error" not in event.actions.state_delta
+    assert event.actions.route == DEFAULT_ROUTE
+    assert "pipeline_error" not in event.actions.state_delta
 
 
 def test_seed_pipeline_context_from_dict() -> None:
@@ -119,12 +123,57 @@ def test_seed_pipeline_context_from_json_string() -> None:
     event = seed_pipeline_context('{"sql": "SELECT 3", "context": "batch"}')
     assert event.output["sql"] == "SELECT 3"
     assert event.actions.state_delta["user_context"] == "batch"
+    assert event.actions.route == DEFAULT_ROUTE
+
+
+def test_metadata_gate_continues_when_baseline_succeeds() -> None:
+    event = decide_metadata_gate(
+        _ctx(baseline={"status": "success", "total_bytes_processed": 10})
+    )
+    assert event.actions.route == DEFAULT_ROUTE
+    delta = event.actions.state_delta or {}
+    assert "pipeline_error" not in delta
+
+
+def test_metadata_gate_aborts_when_baseline_errors() -> None:
+    event = decide_metadata_gate(
+        _ctx(baseline={"status": "error", "error_message": "Not found: table t"})
+    )
+    error = event.actions.state_delta["pipeline_error"]
+    assert event.actions.route == ABORT_ROUTE
+    assert error["error_code"] == BASELINE_FAILED
+    assert error["message"] == "Not found: table t"
+
+
+def test_metadata_gate_aborts_when_baseline_is_missing() -> None:
+    event = decide_metadata_gate(_ctx())
+    error = event.actions.state_delta["pipeline_error"]
+    assert event.actions.route == ABORT_ROUTE
+    assert error["error_code"] == BASELINE_FAILED
+    assert error["message"] == "Baseline measurement was not completed."
 
 
 def test_seed_pipeline_context_rejects_dml() -> None:
     event = seed_pipeline_context(PipelineInput(sql="DELETE FROM t WHERE 1=1"))
-    assert event.actions.state_delta["input_error"]
+    error = event.actions.state_delta["pipeline_error"]
+    assert event.actions.route == ABORT_ROUTE
+    assert error["error_code"] == "FORBIDDEN_SQL"
+    assert error["message"]
     assert event.output["sql"].upper().startswith("DELETE")
+
+
+def test_seed_pipeline_context_rejects_empty_sql() -> None:
+    event = seed_pipeline_context(PipelineInput(sql="   ;"))
+    error = event.actions.state_delta["pipeline_error"]
+    assert event.actions.route == ABORT_ROUTE
+    assert error["error_code"] == "EMPTY_SQL"
+
+
+def test_seed_pipeline_context_rejects_non_select() -> None:
+    event = seed_pipeline_context(PipelineInput(sql="EXPLAIN SELECT 1"))
+    error = event.actions.state_delta["pipeline_error"]
+    assert event.actions.route == ABORT_ROUTE
+    assert error["error_code"] == "INVALID_SQL"
 
 
 def test_seed_pipeline_context_rejects_free_text() -> None:

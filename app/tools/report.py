@@ -53,9 +53,34 @@ def _measurement_method(*candidates: Any) -> MeasurementMethod:
     return "dry_run"
 
 
+def _error_report(ctx: Context, error: dict[str, Any]) -> OptimizationReport:
+    """Stub OptimizationReport used when the pipeline aborted."""
+    return OptimizationReport(
+        status="error",
+        error_code=str(error.get("error_code") or "UNKNOWN"),
+        error_message=str(error.get("message")
+                          or "Optimization could not run."),
+        optimized_sql=str(ctx.state.get("original_sql") or ""),
+        baseline_bytes=0,
+        optimized_bytes=0,
+        bytes_saved=0,
+        savings_pct=0.0,
+        estimated_usd_before=0.0,
+        estimated_usd_after=0.0,
+        usd_saved_per_run=0.0,
+        measurement_method="dry_run",
+        baseline_measured=False,
+        optimized_verified_live=False,
+    )
+
+
 def build_report(ctx: Context) -> OptimizationReport:
     """Assemble the report from state written by the optimize/validate loop."""
     state = ctx.state
+    error = as_dict(state.get("pipeline_error"))
+    if error.get("error_code"):
+        return _error_report(ctx, error)
+
     optimizer_step = as_dict(state.get("optimizer_step"))
     validation = as_dict(state.get("validation"))
     compare = as_dict(validation.get("compare")
@@ -137,8 +162,27 @@ def _bullets(
     return lines
 
 
+def render_error_markdown(report: OptimizationReport) -> str:
+    """Render an abort page instead of an optimization report."""
+    return "\n".join(
+        [
+            "# Could not optimize this query",
+            "",
+            f"**Error code:** `{report.error_code}`",
+            "",
+            report.error_message or "Optimization could not run.",
+            "",
+            "The pipeline stopped before optimization.",
+            "",
+        ]
+    )
+
+
 def render_markdown(report: OptimizationReport) -> str:
     """Render the report as Markdown for the chat UI."""
+    if report.status == "error":
+        return render_error_markdown(report)
+
     lines = ["# BigQuery optimization report", ""]
 
     if report.bytes_saved > 0:
