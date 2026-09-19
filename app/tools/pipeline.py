@@ -9,7 +9,7 @@ from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
 
 from app.schemas import PipelineInput
-from app.tools.safety import classify_sql_guard
+from app.tools.safety import classify_sql_guard, dedupe_repeated_statement
 from app.tools.utils import as_dict, as_int, as_str_list
 
 MAX_OPTIMIZATION_ITERATIONS = 3
@@ -38,9 +38,10 @@ def _as_pipeline_input(node_input: Any) -> PipelineInput:
 def seed_pipeline_context(node_input: Any) -> Event:
     """Copy PipelineInput onto session state for later nodes and tools."""
     parsed = _as_pipeline_input(node_input)
-    classified = classify_sql_guard(parsed.sql)
+    sql = dedupe_repeated_statement(parsed.sql)
+    classified = classify_sql_guard(sql)
     state: dict[str, Any] = {
-        "original_sql": parsed.sql,
+        "original_sql": sql,
         "user_context": parsed.context,
         "tables_metadata": {},
         "partition_summaries": {},
@@ -57,7 +58,7 @@ def seed_pipeline_context(node_input: Any) -> Event:
             "message": classified[1],
         }
     return Event(
-        output=parsed.model_dump(mode="json"),
+        output={"seeded": True},
         actions=EventActions(
             route=ABORT_ROUTE if classified is not None else DEFAULT_ROUTE,
             state_delta=state,

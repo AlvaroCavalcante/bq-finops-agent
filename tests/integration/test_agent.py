@@ -125,6 +125,10 @@ def test_agents_expose_output_schemas() -> None:
     assert metadata_agent.output_key == "metadata_step"
     assert optimizer_agent.output_key == "optimizer_step"
     assert validator_agent.output_key == "validation"
+    assert input_agent.include_contents == "default"
+    assert metadata_agent.include_contents == "none"
+    assert optimizer_agent.include_contents == "none"
+    assert validator_agent.include_contents == "none"
 
 
 def test_metadata_agent_includes_discovery_tool() -> None:

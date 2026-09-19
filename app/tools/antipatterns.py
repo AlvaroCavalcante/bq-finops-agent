@@ -7,6 +7,7 @@ from google.adk.tools import ToolContext
 from sqlglot import exp
 
 from app.schemas import AntipatternResult, dump_model
+from app.tools.safety import dedupe_repeated_statement
 
 _WILDCARD_TABLE = re.compile(r"`[^`]+\.\*`|\b\w+\.\*`", re.IGNORECASE)
 
@@ -178,4 +179,4 @@ def detect_sql_antipatterns(
         )
 
     metadata_map = dict(tool_context.state.get("tables_metadata") or {})
-    return detect_antipatterns(sql, metadata_map)
+    return detect_antipatterns(dedupe_repeated_statement(sql), metadata_map)

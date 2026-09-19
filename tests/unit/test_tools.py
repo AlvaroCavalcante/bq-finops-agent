@@ -23,6 +23,7 @@ from app.tools.safety import (
     FORBIDDEN_SQL_MESSAGE,
     LIVE_FORBIDDEN_MESSAGE,
     classify_sql_guard,
+    dedupe_repeated_statement,
     forbids_live_execution,
     is_readonly_select,
 )
@@ -65,6 +66,17 @@ def test_classify_sql_guard_rejects_empty_and_non_select() -> None:
     assert classify_sql_guard("  ;") == ("EMPTY_SQL", "Empty SQL statement.")
     assert classify_sql_guard("EXPLAIN SELECT 1")[0] == "INVALID_SQL"
     assert classify_sql_guard("SELECT 1") is None
+
+
+def test_dedupe_repeated_statement_collapses_concatenated_merge() -> None:
+    merge = (
+        "MERGE t USING s ON t.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET t.v = s.v "
+        "WHEN NOT MATCHED THEN INSERT (id, v) VALUES (s.id, s.v)"
+    )
+    assert dedupe_repeated_statement(merge) == merge
+    assert dedupe_repeated_statement(f"{merge}\n{merge}") == merge
+    assert dedupe_repeated_statement(f"{merge};\n{merge};") == merge
 
 
 def test_classify_sql_guard_allows_merge_and_insert() -> None:
@@ -150,6 +162,18 @@ def test_measure_query_cost_merge_skips_live_when_bytes_missing() -> None:
     assert result["status"] == "success"
     assert result["measurement_method"] == "dry_run"
     assert result["total_bytes_processed"] is None
+
+
+def test_measure_query_cost_dedupes_concatenated_merge() -> None:
+    ctx = _FakeContext()
+    merge = (
+        "MERGE t USING s ON t.id = s.id "
+        "WHEN NOT MATCHED THEN INSERT ROW"
+    )
+    job = _fake_job(bytes_processed=50)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        measure_query_cost(f"{merge}\n{merge}", "optimized", ctx)
+    mock_run.assert_called_once_with(merge, dry_run=True)
 
 
 def test_validate_output_schema_passes_matching_columns() -> None:

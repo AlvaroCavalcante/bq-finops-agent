@@ -10,6 +10,7 @@ from app.tools.bq_client import get_bq_client, get_max_bytes_billed
 from app.tools.safety import (
     LIVE_FORBIDDEN_MESSAGE,
     classify_sql_guard,
+    dedupe_repeated_statement,
     forbids_live_execution,
 )
 
@@ -61,6 +62,7 @@ def _as_measurement(data: dict) -> dict:
 
 
 def _execute(sql: str, dry_run: bool) -> dict:
+    sql = dedupe_repeated_statement(sql)
     classified = classify_sql_guard(sql)
     if classified is not None:
         return _as_measurement(

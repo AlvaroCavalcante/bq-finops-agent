@@ -105,7 +105,7 @@ def test_seed_pipeline_context_from_model() -> None:
     event = seed_pipeline_context(
         PipelineInput(sql="SELECT 1", context="nightly")
     )
-    assert event.output["sql"] == "SELECT 1"
+    assert event.output == {"seeded": True}
     assert event.actions.state_delta["original_sql"] == "SELECT 1"
     assert event.actions.state_delta["user_context"] == "nightly"
     assert event.actions.route == DEFAULT_ROUTE
@@ -114,14 +114,15 @@ def test_seed_pipeline_context_from_model() -> None:
 
 def test_seed_pipeline_context_from_dict() -> None:
     event = seed_pipeline_context({"sql": "SELECT 2"})
-    assert event.output["sql"] == "SELECT 2"
+    assert event.output == {"seeded": True}
     assert event.actions.state_delta["original_sql"] == "SELECT 2"
     assert event.actions.state_delta["user_context"] is None
 
 
 def test_seed_pipeline_context_from_json_string() -> None:
     event = seed_pipeline_context('{"sql": "SELECT 3", "context": "batch"}')
-    assert event.output["sql"] == "SELECT 3"
+    assert event.output == {"seeded": True}
+    assert event.actions.state_delta["original_sql"] == "SELECT 3"
     assert event.actions.state_delta["user_context"] == "batch"
     assert event.actions.route == DEFAULT_ROUTE
 
@@ -159,7 +160,7 @@ def test_seed_pipeline_context_rejects_dml() -> None:
     assert event.actions.route == ABORT_ROUTE
     assert error["error_code"] == "FORBIDDEN_SQL"
     assert error["message"]
-    assert event.output["sql"].upper().startswith("DELETE")
+    assert event.actions.state_delta["original_sql"].upper().startswith("DELETE")
 
 
 def test_seed_pipeline_context_allows_merge_and_insert() -> None:
@@ -178,6 +179,16 @@ def test_seed_pipeline_context_allows_merge_and_insert() -> None:
     assert "pipeline_error" not in merge.actions.state_delta
     assert insert.actions.route == DEFAULT_ROUTE
     assert "pipeline_error" not in insert.actions.state_delta
+
+
+def test_seed_pipeline_context_dedupes_concatenated_merge() -> None:
+    merge = (
+        "MERGE t USING s ON t.id = s.id "
+        "WHEN NOT MATCHED THEN INSERT ROW"
+    )
+    event = seed_pipeline_context(PipelineInput(sql=f"{merge}\n{merge}"))
+    assert event.actions.route == DEFAULT_ROUTE
+    assert event.actions.state_delta["original_sql"] == merge
 
 
 def test_seed_pipeline_context_rejects_empty_sql() -> None:

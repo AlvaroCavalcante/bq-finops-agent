@@ -16,11 +16,16 @@ from app.schemas import (
     OptimizationReport,
     RecommendationNotApplied,
 )
+from app.tools.safety import forbids_live_execution
 from app.tools.utils import as_dict, as_float, as_int, as_str_list, dedupe
 
 BYTE_UNITS = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
 COMPARE_MISSING_WARNING = (
     "Cost comparison was unavailable; byte and USD figures are reported as zero."
+)
+DML_DRY_RUN_WARNING = (
+    "INSERT/MERGE was measured with dry-run only; live execution is disabled "
+    "so no data is modified. Clustering savings may be undercounted."
 )
 _MEASUREMENT_METHODS: tuple[MeasurementMethod, ...] = (
     "dry_run", "live", "mixed")
@@ -94,6 +99,8 @@ def build_report(ctx: Context) -> OptimizationReport:
     if not compare_ok:
         compare = {}
         warnings.append(COMPARE_MISSING_WARNING)
+    if forbids_live_execution(str(state.get("original_sql") or "")):
+        warnings.append(DML_DRY_RUN_WARNING)
 
     return OptimizationReport(
         optimized_sql=str(

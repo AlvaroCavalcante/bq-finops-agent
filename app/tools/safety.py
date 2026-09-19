@@ -23,6 +23,54 @@ INVALID_SQL_MESSAGE = (
 LIVE_FORBIDDEN_MESSAGE = "Live execution is not allowed for INSERT / MERGE."
 
 
+def _norm_sql(sql: str) -> str:
+    return " ".join(sql.split()).rstrip(";").strip().upper()
+
+
+def _twice_copy(compact: str) -> str | None:
+    if len(compact) < 16:
+        return None
+    if len(compact) % 2 == 1:
+        mid = len(compact) // 2
+        if compact[mid] == " " and compact[:mid] == compact[mid + 1:]:
+            return compact[:mid]
+    if len(compact) % 2 == 0:
+        mid = len(compact) // 2
+        if compact[:mid] == compact[mid:]:
+            return compact[:mid]
+    return None
+
+
+def _prefix_matching_norm(sql: str, target_norm: str) -> str:
+    stripped = sql.strip()
+    last = 0
+    for match in re.finditer(r"\S+", stripped):
+        last = match.end()
+        if _norm_sql(stripped[:last]) == target_norm:
+            return stripped[:last].rstrip(";").strip()
+    return stripped.rstrip(";").strip() or sql
+
+
+def dedupe_repeated_statement(sql: str) -> str:
+    """Return one copy when the same statement was concatenated twice.
+
+    Downstream agents sometimes see original_sql plus conversation history and
+    pass MERGE/INSERT to BigQuery twice, which inflates dry-run bytes.
+    """
+    stripped = sql.strip()
+    if not stripped:
+        return sql
+
+    parts = [p.strip() for p in re.split(r";\s*", stripped) if p.strip()]
+    if len(parts) >= 2 and len({_norm_sql(p) for p in parts}) == 1:
+        return parts[0]
+
+    one = _twice_copy(_norm_sql(stripped))
+    if one is None:
+        return sql
+    return _prefix_matching_norm(stripped, one)
+
+
 def classify_sql_guard(sql: str) -> tuple[str, str] | None:
     """Return (error_code, message) when SQL cannot enter the optimizer pipeline."""
     stripped = sql.strip().rstrip(";")

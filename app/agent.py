@@ -35,6 +35,7 @@ from app.tools.report import render_report
 
 DEFAULT_MODEL = "gemini-3.6-flash"
 _INCLUDE_CONTENTS = "default"
+_STEP_CONTENTS = "none"
 
 
 def _model(model_name: str = DEFAULT_MODEL) -> Gemini:
@@ -70,7 +71,7 @@ metadata_agent = Agent(
         measure_query_cost,
     ],
     after_tool_callback=after_tool_callback,
-    include_contents=_INCLUDE_CONTENTS,
+    include_contents=_STEP_CONTENTS,
     output_key="metadata_step",
 )
 
@@ -82,7 +83,7 @@ optimizer_agent = Agent(
     output_schema=OptimizerStep,
     tools=[detect_sql_antipatterns, diff_sql],
     after_tool_callback=after_tool_callback,
-    include_contents=_INCLUDE_CONTENTS,
+    include_contents=_STEP_CONTENTS,
     output_key="optimizer_step",
 )
 
@@ -94,7 +95,7 @@ validator_agent = Agent(
     output_schema=ValidationStep,
     tools=[measure_query_cost, validate_output_schema, compare_query_stats],
     after_tool_callback=after_tool_callback,
-    include_contents=_INCLUDE_CONTENTS,
+    include_contents=_STEP_CONTENTS,
     output_key="validation",
 )
 
