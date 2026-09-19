@@ -19,7 +19,13 @@ from app.callbacks import after_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
 from app.tools.measure_cost import list_referenced_tables, measure_query_cost
 from app.tools.metadata import get_partition_summary, get_table_metadata
-from app.tools.safety import classify_sql_guard, is_readonly_select
+from app.tools.safety import (
+    FORBIDDEN_SQL_MESSAGE,
+    LIVE_FORBIDDEN_MESSAGE,
+    classify_sql_guard,
+    forbids_live_execution,
+    is_readonly_select,
+)
 
 
 class _FakeContext:
@@ -51,7 +57,7 @@ def test_readonly_select_rejects_delete() -> None:
     assert err is not None
     assert classify_sql_guard(sql) == (
         "FORBIDDEN_SQL",
-        "Only SELECT / WITH … SELECT queries are allowed.",
+        FORBIDDEN_SQL_MESSAGE,
     )
 
 
@@ -59,6 +65,31 @@ def test_classify_sql_guard_rejects_empty_and_non_select() -> None:
     assert classify_sql_guard("  ;") == ("EMPTY_SQL", "Empty SQL statement.")
     assert classify_sql_guard("EXPLAIN SELECT 1")[0] == "INVALID_SQL"
     assert classify_sql_guard("SELECT 1") is None
+
+
+def test_classify_sql_guard_allows_merge_and_insert() -> None:
+    merge_sql = (
+        "MERGE `proj.ds.tgt` T USING (SELECT 1 AS id) S ON T.id = S.id "
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (S.id)"
+    )
+    insert_sql = "INSERT INTO `proj.ds.tgt` SELECT 1 AS id"
+    assert classify_sql_guard(merge_sql) is None
+    assert classify_sql_guard(insert_sql) is None
+    assert classify_sql_guard("WITH src AS (SELECT 1 AS id) INSERT INTO t SELECT * FROM src") is None
+    merge_update = (
+        "MERGE t T USING s S ON T.id = S.id "
+        "WHEN MATCHED THEN UPDATE SET T.v = S.v "
+        "WHEN NOT MATCHED THEN INSERT (id, v) VALUES (S.id, S.v)"
+    )
+    assert classify_sql_guard(merge_update) is None
+    assert forbids_live_execution(merge_update) is True
+    assert forbids_live_execution(merge_sql) is True
+    assert forbids_live_execution(insert_sql) is True
+    ok, err = is_readonly_select(merge_sql)
+    assert ok is False
+    assert err == LIVE_FORBIDDEN_MESSAGE
+    with_update = "WITH src AS (SELECT 1 AS id) UPDATE t SET v = 1"
+    assert classify_sql_guard(with_update)[0] == "FORBIDDEN_SQL"
 
 
 def test_list_referenced_tables_blocks_dml() -> None:
@@ -80,6 +111,45 @@ def test_measure_query_cost_blocks_dml() -> None:
     mock_run.assert_not_called()
     assert result["status"] == "error"
     assert "error_message" in result
+
+
+def test_list_referenced_tables_dry_runs_merge() -> None:
+    sql = (
+        "MERGE `proj.ds.tgt` T USING (SELECT 1 AS id) S ON T.id = S.id "
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (S.id)"
+    )
+    job = _fake_job(tables=[("proj", "ds", "tgt")])
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = list_referenced_tables(sql)
+    mock_run.assert_called_once_with(sql, dry_run=True)
+    assert result["status"] == "success"
+
+
+def test_measure_query_cost_merge_never_runs_live() -> None:
+    ctx = _FakeContext()
+    ctx.state["has_clustering"] = True
+    sql = (
+        "MERGE `proj.ds.tgt` T USING (SELECT 1 AS id) S ON T.id = S.id "
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (S.id)"
+    )
+    job = _fake_job(bytes_processed=500)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        result = measure_query_cost(sql, "baseline", ctx)
+    mock_run.assert_called_once_with(sql, dry_run=True)
+    assert result["status"] == "success"
+    assert result["measurement_method"] == "dry_run"
+
+
+def test_measure_query_cost_merge_skips_live_when_bytes_missing() -> None:
+    ctx = _FakeContext()
+    sql = "INSERT INTO `proj.ds.tgt` SELECT 1 AS id"
+    dry_job = _fake_job(bytes_processed=None)
+    with patch("app.tools.measure_cost._run_query", return_value=dry_job) as mock_run:
+        result = measure_query_cost(sql, "optimized", ctx)
+    mock_run.assert_called_once_with(sql, dry_run=True)
+    assert result["status"] == "success"
+    assert result["measurement_method"] == "dry_run"
+    assert result["total_bytes_processed"] is None
 
 
 def test_validate_output_schema_passes_matching_columns() -> None:

@@ -9,7 +9,7 @@ Optimized step:
 Baseline measurement:
 {baseline?}
 
-1. Call `measure_query_cost` once with `sql` equal to optimizer_step.optimized_sql and purpose=`optimized`. The tool chooses between dry-run or live execution. Do not call it a second time.
+1. Call `measure_query_cost` once with `sql` equal to optimizer_step.optimized_sql and purpose=`optimized`. The tool chooses between dry-run or live execution. INSERT / MERGE are always dry-run (never live). Do not call it a second time.
 2. Call `validate_output_schema` with two column lists of `{name, type, mode}` objects:
    - `original_schema`: copy `baseline.output_schema`
    - `optimized_schema`: copy `output_schema` from the `measure_query_cost` result you just received

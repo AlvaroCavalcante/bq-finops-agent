@@ -12,7 +12,9 @@ def dump_model(model_cls: type[BaseModel], data: dict) -> dict:
 
 
 class PipelineInput(BaseModel):
-    sql: str = Field(description="BigQuery SQL to optimize (SELECT / WITH).")
+    sql: str = Field(
+        description="BigQuery SQL to optimize (SELECT / WITH / INSERT / MERGE)."
+    )
     context: str | None = Field(
         default=None,
         description="Optional business or pipeline context for the rewrite.",

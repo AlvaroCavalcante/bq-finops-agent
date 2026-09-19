@@ -47,8 +47,18 @@ MANDATORY rules (Google BigQuery best practices):
 - Use the most specific wildcard table prefix if wildcards are required.
 - NEVER add LIMIT, TABLESAMPLE, or APPROX_* functions unless they exist in the input SQL.
 - Preserve ALL SQL comments from the input.
-- Preserve exact final output column names, order, and types versus original_sql.
+- Preserve exact final output column names, order, and types versus original_sql. For INSERT / MERGE, preserve the destination table, WHEN-clause semantics, and INSERT/UPDATE column lists (not a SELECT result set).
 - Do not invent or rewrite tables_metadata; use the injected state as-is.
+
+INSERT / MERGE (write statements; measured with dry-run only):
+- Do not rewrite into a multi-statement script (`BEGIN`, `CALL`, scripting). Keep a single INSERT or MERGE.
+- MERGE cost comes from scanning **source and target**. Prune partitions on both: a constant filter on the partition column inside `USING`, and the same column in `ON` or a predicate on the target alias (`T.dt = …`). Do NOT wrap partition columns in DATE(), TIMESTAMP_TRUNC(), or CAST().
+- Project only columns needed in `USING` (no `SELECT *` when schema is known).
+- If the MERGE is append-only (`WHEN NOT MATCHED THEN INSERT` with no target UPDATE/DELETE), you MAY rewrite as an equivalent `INSERT … SELECT` — INSERT does not read the destination table.
+- Do not add `WHEN NOT MATCHED BY SOURCE THEN DELETE` unless it already exists in original_sql (full target scan).
+- Use clustering columns in `ON` / `WHERE` when table metadata shows clustering.
+- `INSERT … SELECT`: optimize the source SELECT; populate the destination partition column; do not add LIMIT.
+- If metadata has `require_partition_filter`, the rewrite MUST filter the partition column.
 
 You may call `diff_sql` with `before` equal to the SQL you started from this turn and `after` equal to the rewritten SQL. Do not omit `before`.
 

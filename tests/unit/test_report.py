@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from app.schemas import OptimizationReport
 from app.tools.report import (
     COMPARE_MISSING_WARNING,
+    DML_DRY_RUN_WARNING,
     build_report,
     render_markdown,
     render_report,
@@ -219,10 +220,10 @@ def test_render_report_emits_markdown_and_structured_output() -> None:
 def test_build_report_aborts_with_pipeline_error() -> None:
     report = build_report(
         _ctx(
-            original_sql="MERGE t USING s ON FALSE WHEN NOT MATCHED THEN INSERT ROW",
+            original_sql="DELETE FROM t WHERE 1=1",
             pipeline_error={
                 "error_code": "FORBIDDEN_SQL",
-                "message": "Only SELECT / WITH … SELECT queries are allowed.",
+                "message": "Only SELECT / WITH / INSERT / MERGE queries are allowed.",
             },
         )
     )
@@ -230,9 +231,9 @@ def test_build_report_aborts_with_pipeline_error() -> None:
     assert report.status == "error"
     assert report.error_code == "FORBIDDEN_SQL"
     assert report.error_message == (
-        "Only SELECT / WITH … SELECT queries are allowed."
+        "Only SELECT / WITH / INSERT / MERGE queries are allowed."
     )
-    assert report.optimized_sql.startswith("MERGE")
+    assert report.optimized_sql.startswith("DELETE")
     assert report.baseline_bytes == 0
     assert report.bytes_saved == 0
 
@@ -243,7 +244,7 @@ def test_render_markdown_for_pipeline_error() -> None:
             original_sql="DELETE FROM t",
             pipeline_error={
                 "error_code": "FORBIDDEN_SQL",
-                "message": "Only SELECT / WITH … SELECT queries are allowed.",
+                "message": "Only SELECT / WITH / INSERT / MERGE queries are allowed.",
             },
         )
     )
@@ -251,7 +252,7 @@ def test_render_markdown_for_pipeline_error() -> None:
 
     assert markdown.startswith("# Could not optimize this query")
     assert "**Error code:** `FORBIDDEN_SQL`" in markdown
-    assert "Only SELECT / WITH … SELECT queries are allowed." in markdown
+    assert "Only SELECT / WITH / INSERT / MERGE queries are allowed." in markdown
     assert "The pipeline stopped before optimization." in markdown
     assert "BigQuery optimization report" not in markdown
 
@@ -271,3 +272,19 @@ def test_render_report_emits_error_markdown() -> None:
     assert event.output["status"] == "error"
     assert event.output["error_code"] == "BASELINE_FAILED"
     assert event.output["error_message"] == "Not found: table missing"
+
+
+def test_build_report_warns_when_original_is_merge() -> None:
+    report = build_report(
+        _ctx(
+            **_state(
+                original_sql=(
+                    "MERGE t USING s ON t.id = s.id "
+                    "WHEN NOT MATCHED THEN INSERT ROW"
+                )
+            )
+        )
+    )
+
+    assert DML_DRY_RUN_WARNING in report.warnings
+    assert report.status == "success"

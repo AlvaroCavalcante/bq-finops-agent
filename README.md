@@ -5,9 +5,9 @@ One-shot BigQuery SQL optimizer built with the [Agent Development Kit (ADK)](htt
 ## Features
 
 - **Pipeline architecture**: input (SQL + context) → metadata (discover tables + enrich + original-query bytes) → optimize (anti-patterns + rewrite) / validate loop → structured report
-- **Cost measurement**: dry-run by default (reuses discovery cache for the same SQL); live only when tables are clustered or dry-run cannot estimate bytes
+- **Cost measurement**: dry-run by default (reuses discovery cache for the same SQL); live only for SELECT when tables are clustered or dry-run cannot estimate bytes
 - **Table discovery**: BigQuery dry-run via `list_referenced_tables` — not LLM inference of FROM clauses
-- **Safety**: blocks DML/DDL; `maximum_bytes_billed` cap on live runs
+- **Safety**: blocks UPDATE/DELETE/DDL; INSERT/MERGE are optimized with dry-run only (never live); `maximum_bytes_billed` cap on live runs
 - **Deterministic checks**: SQL anti-patterns, output schema validation, readonly guardrails
 
 ## Quick start
@@ -50,12 +50,12 @@ START → input_agent → seed_pipeline_context
                   └─ render_report
 ```
 
-`app/agent.py` holds the workflow. `input_agent` emits `PipelineInput`; seed copies `sql`/`context` to session state. Forbidden or non-SELECT SQL aborts at seed; a failed baseline measurement aborts after metadata. Each later agent has an `output_schema` + `output_key`. Tools take explicit arguments (the agent copies `{original_sql?}` into `sql`) and return dicts. `after_tool_callback` projects those returns into session state so later prompts and tools can read them without the model rebuilding JSON.
+`app/agent.py` holds the workflow. `input_agent` emits `PipelineInput`; seed copies `sql`/`context` to session state. Forbidden SQL (UPDATE/DELETE/DDL) or non-SELECT/INSERT/MERGE SQL aborts at seed; a failed baseline measurement aborts after metadata. INSERT/MERGE continue through the pipeline but are never executed live. Each later agent has an `output_schema` + `output_key`. Tools take explicit arguments (the agent copies `{original_sql?}` into `sql`) and return dicts. `after_tool_callback` projects those returns into session state so later prompts and tools can read them without the model rebuilding JSON.
 
 ### Tools
 
 - `list_referenced_tables(sql)` — dry-run discovery of `referenced_tables`
-- `measure_query_cost(sql, purpose)` — baseline or optimized; live vs dry-run comes from clustering / missing dry-run bytes, not from purpose
+- `measure_query_cost(sql, purpose)` — baseline or optimized; live vs dry-run comes from clustering / missing dry-run bytes, not from purpose. INSERT/MERGE always stay on dry-run.
 - `get_table_metadata`, `get_partition_summary`, `get_view_definition` — table/view facts (persisted by callback)
 - `detect_sql_antipatterns(sql)` — optimizer tool; reads `tables_metadata` from state
 - `validate_output_schema(original_schema, optimized_schema)` — schema check (persisted by callback)

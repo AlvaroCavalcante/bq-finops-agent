@@ -162,6 +162,24 @@ def test_seed_pipeline_context_rejects_dml() -> None:
     assert event.output["sql"].upper().startswith("DELETE")
 
 
+def test_seed_pipeline_context_allows_merge_and_insert() -> None:
+    merge = seed_pipeline_context(
+        PipelineInput(
+            sql=(
+                "MERGE t USING s ON t.id = s.id "
+                "WHEN NOT MATCHED THEN INSERT ROW"
+            )
+        )
+    )
+    insert = seed_pipeline_context(
+        PipelineInput(sql="INSERT INTO t SELECT 1")
+    )
+    assert merge.actions.route == DEFAULT_ROUTE
+    assert "pipeline_error" not in merge.actions.state_delta
+    assert insert.actions.route == DEFAULT_ROUTE
+    assert "pipeline_error" not in insert.actions.state_delta
+
+
 def test_seed_pipeline_context_rejects_empty_sql() -> None:
     event = seed_pipeline_context(PipelineInput(sql="   ;"))
     error = event.actions.state_delta["pipeline_error"]

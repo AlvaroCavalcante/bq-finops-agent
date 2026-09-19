@@ -7,7 +7,11 @@ from google.cloud import bigquery
 
 from app.schemas import QueryMeasurement, dump_model
 from app.tools.bq_client import get_bq_client, get_max_bytes_billed
-from app.tools.safety import is_readonly_select
+from app.tools.safety import (
+    LIVE_FORBIDDEN_MESSAGE,
+    classify_sql_guard,
+    forbids_live_execution,
+)
 
 Purpose = Literal["baseline", "optimized"]
 
@@ -57,9 +61,15 @@ def _as_measurement(data: dict) -> dict:
 
 
 def _execute(sql: str, dry_run: bool) -> dict:
-    ok, err = is_readonly_select(sql)
-    if not ok:
-        return _as_measurement({"status": "error", "error_message": err})
+    classified = classify_sql_guard(sql)
+    if classified is not None:
+        return _as_measurement(
+            {"status": "error", "error_message": classified[1]}
+        )
+    if not dry_run and forbids_live_execution(sql):
+        return _as_measurement(
+            {"status": "error", "error_message": LIVE_FORBIDDEN_MESSAGE}
+        )
     method = "dry_run" if dry_run else "live"
     try:
         job = _run_query(sql, dry_run=dry_run)
@@ -136,7 +146,8 @@ def measure_query_cost(
     Chooses live vs dry-run from session clustering state. Does not look
     up table metadata. Reuses a discovery dry-run cache when measuring
     the same SQL on the dry-run path. Falls back to live only when
-    clustering is present or dry-run cannot estimate bytes.
+    clustering is present or dry-run cannot estimate bytes. INSERT and
+    MERGE are always dry-run; live execution is never used for them.
 
     For purpose=baseline, refuses to run until get_table_metadata has
     recorded every referenced table (so clustering is known). Queries
@@ -161,7 +172,8 @@ def measure_query_cost(
             return blocked
 
     has_clustering = bool(tool_context.state.get("has_clustering"))
-    use_live = has_clustering
+    mutating = forbids_live_execution(sql)
+    use_live = has_clustering and not mutating
 
     if use_live:
         final = _execute(sql, dry_run=False)
@@ -177,6 +189,9 @@ def measure_query_cost(
         return dry_result
 
     if dry_result.get("total_bytes_processed") is None:
+        if mutating:
+            dry_result["measurement_method"] = "dry_run"
+            return _as_measurement(dry_result)
         live_result = _execute(sql, dry_run=False)
         if live_result.get("status") != "success":
             return _as_measurement(
