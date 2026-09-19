@@ -138,3 +138,59 @@ def test_detect_sql_antipatterns_reads_tables_metadata_from_state() -> None:
     patterns = {f["pattern"] for f in result["findings"]}
     assert "missing_partition_filter" in patterns
     assert ctx.state["antipatterns"]
+
+
+def _year_part_meta() -> dict:
+    return {
+        "p.d.t": {
+            "status": "success",
+            "dataset": "d",
+            "table": "t",
+            "time_partitioning": {"field": "DATA", "type": "YEAR"},
+        }
+    }
+
+
+def test_merge_column_equality_is_not_a_partition_filter() -> None:
+    sql = (
+        "MERGE t AS tgt USING (SELECT id, DATA FROM aux) src "
+        "ON tgt.id = src.id AND tgt.DATA = src.DATA "
+        "WHEN MATCHED THEN UPDATE SET tgt.DATA = src.DATA "
+        "WHEN NOT MATCHED THEN INSERT (id, DATA) VALUES (src.id, src.DATA)"
+    )
+    result = detect_antipatterns(sql, _year_part_meta())
+    patterns = {f["pattern"] for f in result["findings"]}
+    assert "missing_partition_filter" in patterns
+    assert "constant" in " ".join(f["message"] for f in result["findings"]).lower()
+
+
+def test_merge_with_constant_grain_filter_is_not_flagged() -> None:
+    sql = (
+        "MERGE t AS tgt USING (SELECT id, DATA FROM aux) src "
+        "ON tgt.id = src.id AND tgt.DATA = src.DATA "
+        "AND tgt.DATA >= DATE_TRUNC(CURRENT_DATE(), YEAR) "
+        "AND tgt.DATA < DATE_ADD(DATE_TRUNC(CURRENT_DATE(), YEAR), INTERVAL 1 YEAR) "
+        "WHEN MATCHED THEN UPDATE SET tgt.v = src.v "
+        "WHEN NOT MATCHED THEN INSERT (id, DATA) VALUES (src.id, src.DATA)"
+    )
+    result = detect_antipatterns(sql, _year_part_meta())
+    patterns = {f["pattern"] for f in result["findings"]}
+    assert "missing_partition_filter" not in patterns
+
+
+def test_insert_without_constant_filter_is_flagged() -> None:
+    sql = "INSERT INTO t (id, DATA) SELECT id, DATE(DATAS) AS DATA FROM aux"
+    result = detect_antipatterns(sql, _year_part_meta())
+    patterns = {f["pattern"] for f in result["findings"]}
+    assert "missing_partition_filter" in patterns
+
+
+def test_insert_with_constant_grain_filter_is_not_flagged() -> None:
+    sql = (
+        "INSERT INTO t (id, DATA) "
+        "SELECT id, DATE(DATAS) AS DATA FROM aux "
+        "WHERE DATE(DATAS) >= DATE_TRUNC(CURRENT_DATE(), YEAR)"
+    )
+    result = detect_antipatterns(sql, _year_part_meta())
+    patterns = {f["pattern"] for f in result["findings"]}
+    assert "missing_partition_filter" not in patterns

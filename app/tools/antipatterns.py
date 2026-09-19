@@ -10,6 +10,32 @@ from app.schemas import AntipatternResult, dump_model
 from app.tools.safety import dedupe_repeated_statement
 
 _WILDCARD_TABLE = re.compile(r"`[^`]+\.\*`|\b\w+\.\*`", re.IGNORECASE)
+_PARTITION_PSEUDO = re.compile(r"_PARTITIONTIME|_PARTITIONDATE", re.IGNORECASE)
+# MERGE/INSERT prune only with constants — column equality does not.
+_STATIC_PRUNE = re.compile(
+    r"CURRENT_DATE|CURRENT_TIMESTAMP|CURRENT_DATETIME|"
+    r"DATE_TRUNC|TIMESTAMP_TRUNC|DATETIME_TRUNC|"
+    r"DATE\s+'|TIMESTAMP\s+'|DATETIME\s+'|"
+    r"_PARTITIONTIME|_PARTITIONDATE",
+    re.IGNORECASE,
+)
+_DML = re.compile(r"\b(?:MERGE|INSERT)\b", re.IGNORECASE)
+
+
+def _time_partition_field(table_meta: dict) -> str | None:
+    tp = table_meta.get("time_partitioning") or {}
+    if not isinstance(tp, dict):
+        return None
+    part_field = tp.get("field")
+    if not part_field and tp.get("type"):
+        return "_PARTITIONTIME"
+    return part_field
+
+
+def _missing_partition_filter(sql: str, part_field: str, is_dml: bool) -> bool:
+    if is_dml:
+        return _STATIC_PRUNE.search(sql) is None
+    return part_field.lower() not in sql.lower() and not _PARTITION_PSEUDO.search(sql)
 
 
 def detect_antipatterns(sql: str, metadata_map: dict) -> dict:
@@ -64,29 +90,32 @@ def detect_antipatterns(sql: str, metadata_map: dict) -> dict:
         )
         return dump_model(AntipatternResult, {"status": "success", "findings": findings})
 
+    is_dml = _DML.search(sql) is not None
+
     for table_meta in metadata_map.values():
         if not isinstance(table_meta, dict):
             continue
         if table_meta.get("status") == "error":
             continue
-        tp = table_meta.get("time_partitioning") or {}
-        if not isinstance(tp, dict):
-            tp = {}
-        part_field = tp.get("field")
-        if not part_field and tp.get("type"):
-            part_field = "_PARTITIONTIME"
-        if part_field and part_field not in sql:
-            if not re.search(r"_PARTITIONTIME|_PARTITIONDATE", sql, re.IGNORECASE):
-                findings.append(
-                    {
-                        "pattern": "missing_partition_filter",
-                        "severity": "high",
-                        "message": (
-                            f"Table {table_meta.get('dataset')}.{table_meta.get('table')} "
-                            f"is partitioned on '{part_field}' but query may lack partition filter."
-                        ),
-                    }
-                )
+        part_field = _time_partition_field(table_meta)
+        if part_field and _missing_partition_filter(sql, part_field, is_dml):
+            findings.append(
+                {
+                    "pattern": "missing_partition_filter",
+                    "severity": "high",
+                    "message": (
+                        f"Table {table_meta.get('dataset')}.{table_meta.get('table')} "
+                        f"is partitioned on '{part_field}'. "
+                        + (
+                            "MERGE/INSERT prune only with a constant predicate on that "
+                            "column (CURRENT_DATE, DATE_TRUNC at the partition grain, "
+                            "or a DATE/TIMESTAMP literal). tgt.col = src.col does not prune."
+                            if is_dml
+                            else "Query may lack a partition filter."
+                        )
+                    ),
+                }
+            )
 
         rp = table_meta.get("range_partitioning") or {}
         if isinstance(rp, dict) and rp.get("field"):

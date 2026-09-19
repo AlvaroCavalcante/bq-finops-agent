@@ -34,8 +34,8 @@ Anti-pattern tool:
 MANDATORY rules (Google BigQuery best practices):
 - Project only columns needed in each CTE; remove unused columns.
 - Push filters before JOINs and aggregations; reduce data early.
-- Use partition pruning: filter partition columns with constant expressions; isolate partition column on one side of comparisons.
-- Do NOT wrap partition columns in functions (DATE(), TIMESTAMP_TRUNC(), CAST()) in WHERE unless unavoidable.
+- Partition pruning: BigQuery skips partitions only when the partition column is compared to a **constant** (`DATE '…'`, `CURRENT_DATE()`, `DATE_TRUNC(CURRENT_DATE(), YEAR|MONTH|DAY)`). Isolate the partition column on one side (`tgt.col >= … AND tgt.col < …`).
+- Dynamic predicates do **not** prune: `tgt.col = src.col`, joins, subqueries, or values computed from another table. Mentioning the column in SET / INSERT / SELECT lists also does not prune.
 - Use clustering columns in WHERE/JOIN when table metadata shows clustering.
 - Use declared primary_key_columns and foreign_keys from table metadata for join optimization (BigQuery unenforced PK/FK hints):
   - Inner join elimination: if an INNER JOIN is on an FK to PK pair from metadata, the joined table's key is unique, and no columns from the joined table are selected, rewrite as a filter on the FK (`IS NOT NULL`) or drop the join equivalently.
@@ -52,14 +52,15 @@ MANDATORY rules (Google BigQuery best practices):
 - Do not invent or rewrite tables_metadata; use the injected state as-is.
 
 INSERT / MERGE (write statements; measured with dry-run only):
-- Do not rewrite into a multi-statement script (`BEGIN`, `CALL`, scripting). Keep a single INSERT or MERGE. Do not invent a second copy of the statement.
-- MERGE cost comes from scanning **source and target**. Prune partitions on both: a constant filter on the partition column inside `USING`, and the same column in `ON` or a predicate on the target alias (`T.dt = …`). Do NOT wrap partition columns in DATE(), TIMESTAMP_TRUNC(), or CAST().
-- Project only columns needed in `USING` (no `SELECT *` when schema is known).
-- If the MERGE is append-only (`WHEN NOT MATCHED THEN INSERT` with no target UPDATE/DELETE), you MAY rewrite as an equivalent `INSERT … SELECT` — INSERT does not read the destination table.
-- Do not add `WHEN NOT MATCHED BY SOURCE THEN DELETE` unless it already exists in original_sql (full target scan).
-- Use clustering columns in `ON` / `WHERE` when table metadata shows clustering.
-- `INSERT … SELECT`: optimize the source SELECT; populate the destination partition column; do not add LIMIT.
-- If metadata has `require_partition_filter`, the rewrite MUST filter the partition column.
+- Keep a single INSERT or MERGE. Do not emit `BEGIN` / `DECLARE` / scripting and do not invent a second copy of the statement.
+- Read `time_partitioning.type` (DAY / MONTH / YEAR / HOUR) and the partition field from tables_metadata. Assume the staging/USING/INSERT source is coherent with that grain (a YEAR-partitioned target is merged with current-year rows; DAY with the current day). You do not need min/max from the aux table.
+- Constant window at that grain (put this on the table that is **scanned**):
+  - YEAR: `col >= DATE_TRUNC(CURRENT_DATE(), YEAR) AND col < DATE_ADD(DATE_TRUNC(CURRENT_DATE(), YEAR), INTERVAL 1 YEAR)`
+  - MONTH: same pattern with `MONTH`
+  - DAY / ingestion-time: `col >= CURRENT_DATE()` or `_PARTITIONDATE = CURRENT_DATE()`
+- MERGE scans the **target**. A small USING does not help. If the target is partitioned, you MUST add the constant window on the **target** alias in `ON`. Keeping `tgt.col = src.col` is fine for match semantics but is not enough by itself. Do not add `WHEN NOT MATCHED BY SOURCE`.
+- INSERT … SELECT does **not** scan the destination. If the **source** is partitioned (or the INSERT lists a partition column from staging), add the same constant window in the source `WHERE`. Still write the partition column into the inserted rows. Do not add LIMIT.
+- Project only needed columns in USING / INSERT SELECT. If `require_partition_filter` is set, the rewrite MUST include the constant window.
 
 You may call `diff_sql` with `before` equal to the SQL you started from this turn and `after` equal to the rewritten SQL. Do not omit `before`.
 
