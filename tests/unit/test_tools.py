@@ -15,7 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.callbacks import after_tool_callback
+from app.callbacks import after_tool_callback, before_tool_callback
 from app.tools.compare import compare_query_stats, validate_output_schema
 from app.tools.measure_cost import list_referenced_tables, measure_query_cost
 from app.tools.metadata import get_partition_summary, get_table_metadata
@@ -283,6 +283,39 @@ def test_list_referenced_tables_uses_sql_argument_not_state() -> None:
     with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
         list_referenced_tables("SELECT 1 FROM `proj.ds.tbl`")
     mock_run.assert_called_once_with("SELECT 1 FROM `proj.ds.tbl`", dry_run=True)
+
+
+def test_list_referenced_tables_prefers_seeded_original_sql() -> None:
+    ctx = _FakeContext()
+    ctx.state["original_sql"] = (
+        "MERGE t AS tgt USING s ON tgt.id = s.id "
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id)"
+    )
+    job = _fake_job(tables=[("proj", "ds", "t")])
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        list_referenced_tables("MERGE t AS gt USING s ON gt.id = s.id }", ctx)
+    mock_run.assert_called_once_with(ctx.state["original_sql"], dry_run=True)
+
+
+def test_measure_query_cost_baseline_prefers_seeded_original_sql() -> None:
+    ctx = _FakeContext()
+    ctx.state["original_sql"] = "SELECT 1 FROM t AS tgt"
+    job = _fake_job(bytes_processed=10)
+    with patch("app.tools.measure_cost._run_query", return_value=job) as mock_run:
+        measure_query_cost("SELECT 1 FROM t AS gt }", "baseline", ctx)
+    mock_run.assert_called_once_with(ctx.state["original_sql"], dry_run=True)
+
+
+def test_before_tool_callback_replaces_corrupted_sql_for_baseline() -> None:
+    ctx = _FakeContext()
+    ctx.state["original_sql"] = "SELECT 1 FROM t AS tgt"
+    args = {"sql": "SELECT 1 FROM t AS gt }", "purpose": "baseline"}
+    before_tool_callback(
+        tool=SimpleNamespace(name="measure_query_cost"),
+        args=args,
+        tool_context=ctx,
+    )
+    assert args["sql"] == "SELECT 1 FROM t AS tgt"
 
 
 def test_list_referenced_tables_error_does_not_invent_tables() -> None:

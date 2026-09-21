@@ -120,17 +120,26 @@ def _cached_dry_run(sql: str, tool_context: ToolContext) -> dict | None:
     return None
 
 
-def list_referenced_tables(sql: str) -> dict:
+def list_referenced_tables(
+    sql: str,
+    tool_context: ToolContext | None = None,
+) -> dict:
     """Discover tables referenced by a SQL query via BigQuery dry-run.
 
     Never executes the query. On failure, does not invent table names.
+    When session original_sql is set, that exact text is used so a recopied
+    tool argument cannot mutate aliases or append stray characters.
 
     Args:
-        sql: BigQuery SQL to inspect. Pass original_sql from the pipeline context.
+        sql: BigQuery SQL to inspect. Ignored when original_sql is in state.
 
     Returns:
         dict with referenced_tables on success, or status=error.
     """
+    if tool_context is not None:
+        original = str(tool_context.state.get("original_sql") or "").strip()
+        if original:
+            sql = original
     if not sql:
         return _as_measurement(
             {"status": "error", "error_message": "No SQL provided."}
@@ -163,6 +172,11 @@ def measure_query_cost(
     Returns:
         dict with bytes, measurement_method, schema, and referenced tables.
     """
+    if purpose == "baseline":
+        original = str(tool_context.state.get("original_sql") or "").strip()
+        if original:
+            sql = original
+
     if not sql:
         return _as_measurement(
             {"status": "error", "error_message": "No SQL provided."}

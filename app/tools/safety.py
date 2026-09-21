@@ -22,6 +22,34 @@ INVALID_SQL_MESSAGE = (
 )
 LIVE_FORBIDDEN_MESSAGE = "Live execution is not allowed for INSERT / MERGE."
 
+_SQL_FENCE = re.compile(
+    r"```(?:sql|bigquery|bq)?\s*\n(.*?)```",
+    re.IGNORECASE | re.DOTALL,
+)
+_SQL_START = re.compile(r"(?is)\b(SELECT|WITH|INSERT|MERGE)\b")
+
+
+def extract_sql_from_user_text(text: str) -> str | None:
+    """Slice the SQL statement out of a user message without rewriting it.
+
+    Prefers a fenced code block. Otherwise starts at the first SELECT / WITH /
+    INSERT / MERGE. Returns None when no statement is found.
+    """
+    if not text or not str(text).strip():
+        return None
+    stripped = str(text).strip()
+    for block in _SQL_FENCE.findall(stripped):
+        inner = str(block).strip()
+        if inner and _SQL_START.search(inner):
+            return inner
+    match = _SQL_START.search(stripped)
+    if match is None:
+        return None
+    sql = stripped[match.start() :].strip()
+    if sql.endswith("```"):
+        sql = sql[:-3].strip()
+    return sql or None
+
 
 def _norm_sql(sql: str) -> str:
     return " ".join(sql.split()).rstrip(";").strip().upper()

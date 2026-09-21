@@ -9,7 +9,11 @@ from google.adk.events.event import Event
 from google.adk.events.event_actions import EventActions
 
 from app.schemas import PipelineInput
-from app.tools.safety import classify_sql_guard, dedupe_repeated_statement
+from app.tools.safety import (
+    classify_sql_guard,
+    dedupe_repeated_statement,
+    extract_sql_from_user_text,
+)
 from app.tools.utils import as_dict, as_int, as_str_list
 
 MAX_OPTIMIZATION_ITERATIONS = 3
@@ -35,10 +39,41 @@ def _as_pipeline_input(node_input: Any) -> PipelineInput:
     return PipelineInput.model_validate(node_input)
 
 
-def seed_pipeline_context(node_input: Any) -> Event:
-    """Copy PipelineInput onto session state for later nodes and tools."""
-    parsed = _as_pipeline_input(node_input)
-    sql = dedupe_repeated_statement(parsed.sql)
+def _text_from_content(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    parts = getattr(content, "parts", None)
+    if not parts:
+        text = getattr(content, "text", None)
+        return str(text) if text else ""
+    chunks: list[str] = []
+    for part in parts:
+        text = getattr(part, "text", None)
+        if text:
+            chunks.append(str(text))
+    return "\n".join(chunks)
+
+
+def seed_pipeline_context(node_input: Any = None, ctx: Context | None = None) -> Event:
+    """Copy PipelineInput onto session state for later nodes and tools.
+
+    SQL is taken from the user message when present so the input LLM cannot
+    mutate aliases or append JSON/template characters (e.g. tgt → gt, stray }).
+    """
+    source = node_input
+    if source is None and ctx is not None:
+        source = ctx.state.get("pipeline_input")
+    extracted = extract_sql_from_user_text(
+        _text_from_content(getattr(ctx, "user_content", None) if ctx is not None else None)
+    )
+    parsed = (
+        PipelineInput(sql=extracted or "", context=None)
+        if source is None
+        else _as_pipeline_input(source)
+    )
+    sql = dedupe_repeated_statement(extracted or parsed.sql)
     classified = classify_sql_guard(sql)
     state: dict[str, Any] = {
         "original_sql": sql,

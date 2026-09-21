@@ -34,6 +34,7 @@ from app.tools.pipeline import (
     decide_optimization_loop,
     seed_pipeline_context,
 )
+from app.tools.safety import extract_sql_from_user_text
 
 ORIGINAL_SQL = "SELECT * FROM t"
 BEST_SQL = "SELECT a FROM t"
@@ -208,6 +209,39 @@ def test_seed_pipeline_context_rejects_non_select() -> None:
 def test_seed_pipeline_context_rejects_free_text() -> None:
     with pytest.raises(ValidationError):
         seed_pipeline_context("Otimize:\nSELECT 1 FROM t")
+
+
+def test_extract_sql_from_user_text_keeps_tgt_alias() -> None:
+    user = (
+        "Otimize:\n"
+        "MERGE INTO t AS tgt USING s AS src ON tgt.id = src.id "
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (src.id)"
+    )
+    sql = extract_sql_from_user_text(user)
+    assert sql is not None
+    assert "AS tgt" in sql
+    assert sql.startswith("MERGE")
+
+
+def test_seed_prefers_user_message_over_llm_copy() -> None:
+    original = (
+        "MERGE INTO t AS tgt USING s AS src ON tgt.id = src.id "
+        "WHEN NOT MATCHED THEN INSERT (id) VALUES (src.id)"
+    )
+    corrupted = original.replace("tgt", "gt") + "}"
+    ctx = SimpleNamespace(
+        user_content=SimpleNamespace(parts=[SimpleNamespace(text=original)]),
+        state={},
+    )
+    event = seed_pipeline_context(
+        PipelineInput(sql=corrupted, context="nightly"),
+        ctx=ctx,
+    )
+    seeded = event.actions.state_delta["original_sql"]
+    assert "AS tgt" in seeded
+    assert "AS gt" not in seeded
+    assert not seeded.rstrip().endswith("}")
+    assert event.actions.state_delta["user_context"] == "nightly"
 
 
 def test_first_pass_improvement_continues_to_squeeze() -> None:

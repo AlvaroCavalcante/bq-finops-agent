@@ -126,7 +126,10 @@ def test_agents_expose_output_schemas() -> None:
     assert optimizer_agent.output_key == "optimizer_step"
     assert validator_agent.output_key == "validation"
     assert input_agent.include_contents == "default"
-    assert metadata_agent.include_contents == "none"
+    assert metadata_agent.after_tool_callback is not None
+    assert metadata_agent.before_tool_callback is not None
+    assert optimizer_agent.before_tool_callback is not None
+    assert validator_agent.before_tool_callback is not None
     assert optimizer_agent.include_contents == "none"
     assert validator_agent.include_contents == "none"
 

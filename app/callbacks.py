@@ -1,6 +1,8 @@
 from google.adk.tools.base_tool import BaseTool
 from google.adk.tools.tool_context import ToolContext
 
+from app.tools.utils import as_dict
+
 
 def _tool_name(tool: BaseTool | None) -> str:
     if tool is None:
@@ -46,6 +48,36 @@ def _store_measurement(
         method = final.get("measurement_method")
         if final.get("status") == "success" and method in ("live", "mixed"):
             tool_context.state["optimized_verified_live"] = True
+
+
+def before_tool_callback(
+    tool: BaseTool,
+    args: dict,
+    tool_context: ToolContext,
+) -> dict | None:
+    """Force discovery/baseline tools to use the seeded original_sql."""
+    if tool_context is None or not isinstance(args, dict):
+        return None
+    original = str(tool_context.state.get("original_sql") or "").strip()
+    if not original:
+        return None
+    name = _tool_name(tool)
+    if name == "list_referenced_tables":
+        args["sql"] = original
+        return None
+    if name == "measure_query_cost" and str(args.get("purpose") or "") == "baseline":
+        args["sql"] = original
+        return None
+    if name == "detect_sql_antipatterns":
+        rewritten = str(
+            as_dict(tool_context.state.get("optimizer_step")).get("optimized_sql")
+            or ""
+        ).strip()
+        incoming = str(args.get("sql") or "").strip()
+        if rewritten and incoming == rewritten:
+            return None
+        args["sql"] = original
+    return None
 
 
 def after_tool_callback(
