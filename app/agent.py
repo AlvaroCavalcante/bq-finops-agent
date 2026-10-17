@@ -1,5 +1,9 @@
 """One-shot BigQuery SQL optimizer workflow."""
 
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
 from google.adk.agents import Agent
 from google.adk.apps import App
 from google.adk.models import Gemini
@@ -33,7 +37,11 @@ from app.tools.pipeline import (
 )
 from app.tools.report import render_report
 
-DEFAULT_MODEL = "gemini-3.6-flash"
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+_FALLBACK_MODEL = "gemini-3.8-flash"
+DEFAULT_MODEL = os.environ.get(
+    "GEMINI_MODEL", _FALLBACK_MODEL).strip() or _FALLBACK_MODEL
 _INCLUDE_CONTENTS = "default"
 _STEP_CONTENTS = "none"
 
@@ -78,7 +86,7 @@ metadata_agent = Agent(
 
 optimizer_agent = Agent(
     name="optimizer_agent",
-    model=_model(), # gemini-3.1-pro-preview
+    model=_model(),  # gemini-3.1-pro-preview
     instruction=load_prompt("optimizer"),
     description="Rewrites BigQuery SQL to reduce bytes processed and query costs.",
     output_schema=OptimizerStep,

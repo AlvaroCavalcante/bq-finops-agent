@@ -34,6 +34,7 @@ agents-cli run "SELECT * FROM \`bigquery-public-data.samples.shakespeare\` LIMIT
 | `GOOGLE_CLOUD_PROJECT` | GCP project for BigQuery | required |
 | `GOOGLE_GENAI_USE_VERTEXAI` | Use Vertex AI (not AI Studio) | `true` |
 | `GOOGLE_CLOUD_LOCATION` | Gemini/Vertex region (`global`; do not use the BQ region) | `global` |
+| `GEMINI_MODEL` | Model id for metadata, optimizer, and validator agents | `gemini-3.8-flash` |
 | `BQ_LOCATION` | BigQuery job location | `us-east4` |
 | `BQ_MAX_BYTES_BILLED` | Cap for live query runs (bytes) | 50 GiB |
 | `BQ_ON_DEMAND_USD_PER_TIB` | On-demand price for USD estimates | 6.25 |
@@ -94,7 +95,7 @@ Requires `agents-cli` (`uv tool install google-agents-cli`). The local `.env` is
 agents-cli deploy \
   --project gcd-pr-dados \
   --region us-east1 \
-  --update-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,BQ_LOCATION=us-east4" \
+  --update-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=global,GEMINI_MODEL=gemini-3.8-flash,BQ_LOCATION=us-east4" \
   --no-confirm-project
 ```
 
